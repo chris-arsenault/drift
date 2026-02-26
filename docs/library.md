@@ -1,0 +1,147 @@
+# Drift Artifact Library
+
+The drift library centralizes guard artifacts — ESLint rules, ADRs, pattern docs, review checklists — so they propagate across projects without manual copy-paste.
+
+## How It Works
+
+```
+Project A                    Library (~/.drift/library)              Project B
+─────────                    ──────────────────────────              ─────────
+eslint-rules/                rules/eslint/                           eslint-rules/
+  no-direct-fetch.js  ──publish──>  no-direct-fetch.js  ──sync──>    no-direct-fetch.js
+docs/adr/                    adr/                                    docs/adr/
+  0001-fetch-pattern.md ──>    0001-fetch-pattern.md    ──>           0001-fetch-pattern.md
+```
+
+1. **drift-guard** generates artifacts in a project
+2. `drift library publish` copies them to the library with tags
+3. `drift library sync` in another project pulls matching artifacts (filtered by tag intersection)
+
+The library is **local-first**: it lives at `~/.drift/library/` and works immediately without any git setup. Optionally, you can make the library directory a git repo for team sharing.
+
+## Setup
+
+### Initialize the library
+
+```bash
+drift library init
+```
+
+This creates:
+
+```
+~/.drift/library/
+  library.json              # manifest of all artifacts
+  rules/
+    eslint/                 # ESLint rule modules
+    ruff/                   # Ruff rules (future)
+    ast-grep/               # ast-grep rules (future)
+  adr/                      # Architecture Decision Records
+  patterns/                 # Pattern usage guides
+  checklists/               # Review checklists
+```
+
+### Configure a project
+
+`drift install-skill` creates `.drift-audit/config.json` automatically. Edit the tags to match your project's tech stack:
+
+```json
+{
+  "library": "~/.drift/library",
+  "tags": ["react", "zustand", "tanstack-query"],
+  "sync": {
+    "eslint-rule": "eslint-rules/",
+    "adr": "docs/adr/",
+    "pattern": "docs/patterns/",
+    "checklist": "docs/"
+  }
+}
+```
+
+**Tags** control which artifacts flow to/from this project. When publishing, the project's tags are attached to artifacts. When syncing, only artifacts whose tags overlap with the project's tags are pulled in.
+
+**Sync mappings** tell drift where each artifact type lives in your project. Adjust paths to match your directory conventions.
+
+## Commands
+
+### `drift library publish`
+
+Scans the project's artifact directories (from `sync` mappings in config) and copies new or changed files to the library.
+
+- Uses SHA-256 checksums to detect changes
+- Skips unchanged files
+- Merges tags: if an artifact exists with tags `["react"]` and you publish from a project with tags `["react", "zustand"]`, the library entry gets `["react", "zustand"]`
+- Derives artifact type from which sync mapping matched
+
+### `drift library sync`
+
+Pulls matching artifacts from the library into the project.
+
+- Filters by tag intersection: artifact matches if **any** of its tags appear in the project's tag list
+- Only copies if checksum differs (library version is different from local)
+- Creates destination directories if needed
+- Reports what was synced
+
+### `drift library list`
+
+Prints all artifacts in the library, grouped by type. Shows tags, source project, and last update date.
+
+### `drift library status`
+
+Compares library artifacts vs the current project:
+
+| Symbol | Meaning |
+|--------|---------|
+| `=` | In sync (checksums match) |
+| `<` | Library is newer — run `drift library sync` |
+| `>` | Project is newer — run `drift library publish` |
+| `?` | Not synced (artifact exists in library but not in project) |
+
+## Tag Strategy
+
+Tags should describe the tech stack and domain. Projects sharing similar stacks will share more artifacts.
+
+**Good tags:**
+- Technology: `react`, `vue`, `express`, `fastify`
+- State management: `zustand`, `redux`, `tanstack-query`
+- Domain: `monorepo`, `spa`, `ssr`
+
+**Avoid:**
+- Too broad: `javascript`, `typescript` (everything matches)
+- Too narrow: `my-project-name` (nothing else matches)
+
+A reasonable set for a React project:
+```json
+["react", "zustand", "tanstack-query"]
+```
+
+## Team Sharing
+
+The library directory is just files on disk. To share with a team:
+
+```bash
+cd ~/.drift/library
+git init
+git add -A
+git commit -m "Initial library"
+git remote add origin <url>
+git push -u origin main
+```
+
+Team members clone the same repo to `~/.drift/library/`:
+```bash
+git clone <url> ~/.drift/library
+```
+
+Then `drift library sync` and `drift library publish` work normally. Use `git pull`/`git push` in the library directory to share updates.
+
+## Artifact Types
+
+| Type | Library dir | Extensions | Description |
+|------|------------|-----------|-------------|
+| `eslint-rule` | `rules/eslint/` | `.js`, `.cjs`, `.mjs`, `.ts` | Custom ESLint rule modules |
+| `ruff-rule` | `rules/ruff/` | `.py`, `.toml` | Ruff lint rules |
+| `ast-grep-rule` | `rules/ast-grep/` | `.yml`, `.yaml` | ast-grep patterns |
+| `adr` | `adr/` | `.md` | Architecture Decision Records |
+| `pattern` | `patterns/` | `.md` | Pattern usage guides |
+| `checklist` | `checklists/` | `.md` | Review checklists |

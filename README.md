@@ -38,7 +38,7 @@ drift install-skill
 drift run --project .
 ```
 
-The tool writes structured output to `.drift-audit/semantic/`. The Claude Code skill reads this output and verifies whether clusters represent genuine semantic duplication.
+The tool writes structured output to `.drift-audit/semantic/`. The drift-audit-semantic skill reads this output and verifies whether clusters represent genuine semantic duplication.
 
 ## Usage
 
@@ -83,12 +83,55 @@ The tool is fully deterministic — same input, same output. The LLM layer (Clau
 
 See [docs/architecture.md](docs/architecture.md) for pipeline details, similarity signals, and output artifacts.
 
+## Drift Skills
+
+`drift install-skill` installs six Claude Code skills into your project:
+
+| Skill | Purpose |
+|-------|---------|
+| `drift` | Orchestrator: audit → plan → unify → guard |
+| `drift-audit` | Structural drift discovery |
+| `drift-audit-ux` | Behavioral drift discovery |
+| `drift-audit-semantic` | Semantic duplication detection (tool-assisted) |
+| `drift-unify` | Batch refactoring toward canonical patterns |
+| `drift-guard` | Generate ESLint rules, ADRs, pattern docs |
+
+Use `/drift` in Claude Code to run the full pipeline, or `/drift audit`, `/drift plan`, `/drift unify`, `/drift guard` for individual phases.
+
+## Artifact Library
+
+Centralize drift-guard artifacts (ESLint rules, ADRs, pattern docs) and sync them across projects.
+
+```bash
+drift library init       # initialize ~/.drift/library
+drift library publish    # push guard artifacts from project to library
+drift library sync       # pull matching artifacts into project
+drift library list       # show library contents
+drift library status     # compare library vs project
+```
+
+Artifacts are scoped by **tags**. Set tags in `.drift-audit/config.json`:
+
+```json
+{
+  "tags": ["react", "zustand"],
+  "sync": {
+    "eslint-rule": "eslint-rules/",
+    "adr": "docs/adr/"
+  }
+}
+```
+
+The library is local-first (`~/.drift/library/`). Optionally back it with git for team sharing.
+
+See [docs/library.md](docs/library.md) for details.
+
 ## Management
 
 ```bash
 drift version        # Show version and install path
 drift upgrade        # Pull latest + refresh dependencies
-drift install-skill  # Install/update skill in current project
+drift install-skill  # Install/update skills in current project
 ```
 
 ## Uninstall
@@ -103,6 +146,6 @@ Remove the `# --- drift-semantic ---` block from your shell profile (`~/.bashrc`
 
 - [Architecture](docs/architecture.md) — pipeline stages, similarity signals, output artifacts
 - [CLI Reference](docs/cli-reference.md) — full command list with examples
+- [Library](docs/library.md) — centralized artifact library
 - [Development](docs/development.md) — linting, testing, conventions
 - [Design Document](docs/design.md) — problem statement, design principles, data flow
-- [Skill Definition](skill/SKILL.md) — Claude Code agent instructions

@@ -14,11 +14,15 @@ Pull latest changes. If `package.json` or `pyproject.toml` changed, clears cache
 
 ### `drift install-skill [target-dir]`
 
-Install the Claude Code skill to a project. Default: current directory.
+Install all drift Claude Code skills to a project. Default: current directory.
 
-- Copies `skill/SKILL.md` to `.claude/skills/drift-audit-semantic/SKILL.md`
-- Appends `DRIFT_SEMANTIC` env var block to `.claude/CLAUDE.md` if not present
-- Idempotent: SKILL.md always overwritten (latest version), CLAUDE.md only appended once
+- Copies all 6 skills to `.claude/skills/<name>/SKILL.md`
+- Copies drift-guard reference files to `.claude/skills/drift-guard/references/`
+- Appends drift config block to `.claude/CLAUDE.md` if not present
+- Creates `.drift-audit/config.json` with default library settings
+- Idempotent: SKILL.md files always overwritten (latest version), CLAUDE.md only appended once
+
+Skills installed: `drift`, `drift-audit`, `drift-audit-ux`, `drift-audit-semantic`, `drift-unify`, `drift-guard`.
 
 ## Pipeline Commands
 
@@ -86,6 +90,36 @@ drift search called-by "src/hooks/useDataLoader.ts::useDataLoader"
 drift search co-occurs-with "src/components/Modal.tsx::Modal"
 drift search type-like "src/hooks/useDataLoader.ts::useDataLoader"
 ```
+
+## Library Commands
+
+Manage the centralized drift artifact library. See [docs/library.md](library.md) for the full guide.
+
+### `drift library init [path]`
+
+Initialize the library directory. Default: `~/.drift/library`.
+
+Creates the directory structure and an empty `library.json` manifest.
+
+### `drift library publish`
+
+Publish guard artifacts from the current project to the library.
+
+Reads `.drift-audit/config.json` to find artifact directories (via `sync` mappings), computes checksums, and copies new/changed files to the library. Published artifacts inherit the project's tags.
+
+### `drift library sync`
+
+Pull matching artifacts from the library into the current project.
+
+Filters library artifacts by tag intersection with the project's tags. Only copies files where the library version differs from the local version.
+
+### `drift library list`
+
+Show all artifacts in the library, grouped by type.
+
+### `drift library status`
+
+Compare library artifacts vs the current project. Shows which artifacts are in sync, which are newer in the library, which are newer in the project, and which haven't been synced.
 
 ## Environment Variables
 
