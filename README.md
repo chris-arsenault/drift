@@ -2,17 +2,11 @@
 
 [![CI](https://github.com/chris-arsenault/drift/actions/workflows/ci.yml/badge.svg)](https://github.com/chris-arsenault/drift/actions/workflows/ci.yml)
 
-Deterministic semantic drift detection for TypeScript/React codebases. Finds the same functional concept implemented independently under different names — the kind of duplication that grep, ESLint, and traditional DRY tools miss entirely.
+Find and fix technical drift — places where the same concept is implemented in multiple inconsistent ways. The kind of duplication that grep, ESLint, and traditional DRY tools miss entirely.
 
 Three components named `ButtonHeader`, `ToolBar`, and `GridComponent` that all render "a horizontal bar of contextual action buttons." Three functions named `loadWorldData()`, `fetchEntities()`, and `buildStateForSlot()` that all load entity data from persistence.
 
-## Prerequisites
-
-- **Node.js** (for the TypeScript extractor)
-- **Python 3.10+** (for the scoring pipeline)
-- **ast-grep** (`sg`) — optional, adds structural pattern matching
-
-Dependencies auto-install on first run. No API keys, no databases, no Docker.
+Drift works as a set of Claude Code skills that orchestrate the full lifecycle: **discover** drift, **plan** a prioritized attack order, **unify** toward canonical patterns, and **guard** against regression with ESLint rules and ADRs.
 
 ## Install
 
@@ -20,87 +14,74 @@ Dependencies auto-install on first run. No API keys, no databases, no Docker.
 curl -fsSL https://raw.githubusercontent.com/chris-arsenault/drift/main/install.sh | bash
 ```
 
-Or clone manually:
+Then install the skills into your project:
 
 ```bash
-git clone https://github.com/chris-arsenault/drift.git ~/.drift-semantic
-export PATH="$HOME/.drift-semantic/bin:$PATH"
-```
-
-## Quick Start
-
-```bash
-# Install the Claude Code skill in your project
 cd /path/to/your/project
 drift install-skill
-
-# Run the full pipeline
-drift run --project .
 ```
 
-The tool writes structured output to `.drift-audit/semantic/`. The drift-audit-semantic skill reads this output and verifies whether clusters represent genuine semantic duplication.
+This installs six skills into `.claude/skills/` and configures your project's `.claude/CLAUDE.md`.
+
+### Prerequisites
+
+- **Claude Code** — the skills are the primary interface
+- **Node.js** — for the TypeScript extractor (used by semantic audit)
+- **Python 3.10+** — for the scoring pipeline and library management
+- **ast-grep** (`sg`) — optional, adds structural pattern matching
+
+Dependencies auto-install on first run. No API keys, no databases, no Docker.
 
 ## Usage
 
-```bash
-# Full pipeline
-drift run --project /path/to/project
-
-# Individual stages
-drift extract --project /path/to/project
-drift fingerprint
-drift score
-drift cluster
-drift report
-
-# Inspect results
-drift inspect unit "src/components/ToolBar.tsx::ToolBar"
-drift inspect similar "src/components/ToolBar.tsx::ToolBar" --top 10
-drift inspect cluster cluster-001
-
-# Search the index
-drift search calls "src/lib/api.ts::fetchEntities"
-drift search type-like "src/hooks/useDataLoader.ts::useDataLoader"
-```
-
-See [docs/cli-reference.md](docs/cli-reference.md) for the full command list.
-
-## How It Works
+In Claude Code, use `/drift` to run the full pipeline:
 
 ```
-extract → fingerprint → typesig → callgraph → depcontext
-                              ↓
-                        score → cluster → report
+/drift                    Full pipeline: audit → plan → unify → guard
+/drift audit              Run all three audits (structural, behavioral, semantic)
+/drift plan               Prioritize findings into an attack order
+/drift unify              Refactor toward canonical patterns
+/drift guard              Generate ESLint rules, ADRs, pattern docs
 ```
 
-1. **Extract** — TypeScript AST parsing via ts-morph. Extracts all exported code units with type info, JSX structure, hook usage, imports, call graph, consumer graph, and behavior markers.
-2. **Fingerprint** — Computes structural fingerprints: JSX hashes, hook profile vectors, import constellations (IDF-weighted), behavior flags.
-3. **Score** — Pairwise similarity across 13 signals with adaptive weight matrix. Weights adjust based on available signals and unit kinds.
-4. **Cluster** — Graph-based community detection (connected components + greedy modularity).
-5. **Report** — Markdown report, drift manifest, dependency atlas.
+The orchestrator (`/drift`) runs all four phases in sequence. The plan phase is the human checkpoint — you review and approve the prioritized attack order before unify and guard proceed autonomously.
 
-The tool is fully deterministic — same input, same output. The LLM layer (Claude Code skill) is optional and external: it reads the tool's structured output, verifies clusters, and writes findings back.
+### Individual Skills
 
-See [docs/architecture.md](docs/architecture.md) for pipeline details, similarity signals, and output artifacts.
+Each phase is also available as a standalone skill for focused work:
 
-## Drift Skills
+| Skill | Invoke | What it does |
+|-------|--------|-------------|
+| `drift` | `/drift` | Orchestrator: coordinates all phases |
+| `drift-audit` | `/drift-audit` | Structural drift discovery via codebase scanning |
+| `drift-audit-ux` | `/drift-audit-ux` | Behavioral drift across 7 UX domains |
+| `drift-audit-semantic` | `/drift-audit-semantic` | Semantic duplication detection (tool-assisted) |
+| `drift-unify` | `/drift-unify` | Batch refactoring toward a chosen canonical pattern |
+| `drift-guard` | `/drift-guard` | Generate ESLint rules, ADRs, pattern docs, checklists |
 
-`drift install-skill` installs six Claude Code skills into your project:
+### What Each Phase Produces
 
-| Skill | Purpose |
-|-------|---------|
-| `drift` | Orchestrator: audit → plan → unify → guard |
-| `drift-audit` | Structural drift discovery |
-| `drift-audit-ux` | Behavioral drift discovery |
-| `drift-audit-semantic` | Semantic duplication detection (tool-assisted) |
-| `drift-unify` | Batch refactoring toward canonical patterns |
-| `drift-guard` | Generate ESLint rules, ADRs, pattern docs |
+**Audit** writes to `.drift-audit/`:
+- `drift-manifest.json` — machine-readable findings (all drift areas, variants, impact ratings)
+- `drift-report.md` — human-readable report with priority matrix and detailed analysis
 
-Use `/drift` in Claude Code to run the full pipeline, or `/drift audit`, `/drift plan`, `/drift unify`, `/drift guard` for individual phases.
+**Plan** writes to `.drift-audit/`:
+- `attack-plan.json` — dependency-aware prioritized order with phase tracking
+
+**Unify** writes to the project:
+- Refactored source files aligned to canonical patterns
+- `UNIFICATION_LOG.md` — what changed, shared utilities created, exceptions
+- `DRIFT_BACKLOG.md` — remaining work for future sessions
+
+**Guard** writes to the project:
+- ESLint rules in `eslint-rules/` (or project convention)
+- ADRs in `docs/adr/`
+- Pattern usage guides in `docs/patterns/`
+- Updated review checklist
 
 ## Artifact Library
 
-Centralize drift-guard artifacts (ESLint rules, ADRs, pattern docs) and sync them across projects.
+Guard artifacts (ESLint rules, ADRs, pattern docs) can be centralized and synced across projects.
 
 ```bash
 drift library init       # initialize ~/.drift/library
@@ -124,7 +105,8 @@ Artifacts are scoped by **tags**. Set tags in `.drift-audit/config.json`:
 
 The library is local-first (`~/.drift/library/`). Optionally back it with git for team sharing.
 
-Enable auto-sync so Claude handles it transparently:
+Enable **online mode** so Claude handles sync transparently as part of the pipeline:
+
 ```bash
 drift online         # auto-sync before audits, auto-publish after guard
 drift offline        # back to manual sync (default)
@@ -132,13 +114,51 @@ drift offline        # back to manual sync (default)
 
 See [docs/library.md](docs/library.md) for details.
 
-## Management
+## How It Works
+
+The semantic analysis pipeline (used by `/drift-audit-semantic`) is a deterministic tool that runs independently of the LLM:
+
+```
+extract → fingerprint → typesig → callgraph → depcontext
+                              ↓
+                        score → cluster → report
+```
+
+1. **Extract** — TypeScript AST parsing via ts-morph. Extracts all exported code units with type info, JSX structure, hook usage, imports, call graph, consumer graph, and behavior markers.
+2. **Fingerprint** — Computes structural fingerprints: JSX hashes, hook profile vectors, import constellations (IDF-weighted), behavior flags.
+3. **Score** — Pairwise similarity across 13 signals with adaptive weight matrix.
+4. **Cluster** — Graph-based community detection (connected components + greedy modularity).
+5. **Report** — Markdown report, drift manifest, dependency atlas.
+
+The other two audit types (structural and behavioral) are agent-driven — Claude reads your source files directly, using `scripts/discover.sh` for initial inventory.
+
+See [docs/architecture.md](docs/architecture.md) for pipeline details.
+
+## CLI Reference
+
+The `drift` CLI handles installation, library management, and the low-level analysis pipeline. Skills invoke these commands under the hood.
 
 ```bash
-drift version        # Show version and install path
-drift upgrade        # Pull latest + refresh dependencies
-drift install-skill  # Install/update skills in current project
+# Management
+drift version        # show version and install path
+drift upgrade        # pull latest + refresh dependencies
+drift install-skill  # install/update skills in a project
+
+# Library
+drift library init | publish | sync | list | status
+
+# Mode
+drift online         # enable auto-sync
+drift offline        # disable auto-sync (default)
+
+# Low-level pipeline (typically invoked by skills, not directly)
+drift run --project .              # full semantic analysis
+drift extract --project .          # just extraction
+drift inspect unit "src/Foo.tsx::Foo"
+drift search type-like "src/Foo.tsx::Foo"
 ```
+
+See [docs/cli-reference.md](docs/cli-reference.md) for the full command list.
 
 ## Uninstall
 
