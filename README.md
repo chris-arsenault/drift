@@ -124,6 +124,12 @@ Artifacts are scoped by **tags**. Set tags in `.drift-audit/config.json`:
 
 The library is local-first (`~/.drift/library/`). Optionally back it with git for team sharing.
 
+Enable auto-sync so Claude handles it transparently:
+```bash
+drift online         # auto-sync before audits, auto-publish after guard
+drift offline        # back to manual sync (default)
+```
+
 See [docs/library.md](docs/library.md) for details.
 
 ## Management

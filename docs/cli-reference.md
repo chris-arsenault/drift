@@ -91,6 +91,20 @@ drift search co-occurs-with "src/components/Modal.tsx::Modal"
 drift search type-like "src/hooks/useDataLoader.ts::useDataLoader"
 ```
 
+## Sync Mode Commands
+
+### `drift online`
+
+Enable auto-sync mode for the current project. In online mode, the CLAUDE.md instructions tell Claude to automatically run `drift library sync` before audits and `drift library publish` after guard phases.
+
+Updates `.drift-audit/config.json` (`mode: "online"`) and refreshes the CLAUDE.md block.
+
+### `drift offline`
+
+Disable auto-sync (default). Library sync and publish must be run manually.
+
+Updates `.drift-audit/config.json` (`mode: "offline"`) and refreshes the CLAUDE.md block.
+
 ## Library Commands
 
 Manage the centralized drift artifact library. See [docs/library.md](library.md) for the full guide.

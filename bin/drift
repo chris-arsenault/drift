@@ -7,6 +7,8 @@
 #   drift self-update      Alias for upgrade
 #   drift install-skill    Install Claude Code skills to a project
 #   drift library          Manage the centralized drift artifact library
+#   drift online           Enable auto-sync (library syncs transparently)
+#   drift offline          Disable auto-sync (manual library sync)
 #
 # All other commands pass through to cli.sh unchanged.
 
@@ -126,37 +128,17 @@ drift_install_skill() {
         success "Installed: .claude/skills/drift-guard/references/"
     fi
 
-    # -- Update CLAUDE.md --------------------------------------------------
-
-    local claude_md="$target_dir/.claude/CLAUDE.md"
-    mkdir -p "$target_dir/.claude"
-
-    if [[ -f "$claude_md" ]]; then
-        if grep -q "<!-- drift-semantic -->" "$claude_md" 2>/dev/null; then
-            # Replace existing block between markers
-            sed -i '/<!-- drift-semantic -->/,/<!-- \/drift-semantic -->/d' "$claude_md"
-            _append_claude_block "$claude_md"
-            success "Updated drift block in CLAUDE.md"
-        elif grep -q "DRIFT_SEMANTIC" "$claude_md" 2>/dev/null; then
-            info "CLAUDE.md already references DRIFT_SEMANTIC — skipping."
-        else
-            _append_claude_block "$claude_md"
-            success "Appended drift config to CLAUDE.md"
-        fi
-    else
-        _append_claude_block "$claude_md"
-        success "Created .claude/CLAUDE.md"
-    fi
-
-    # -- Create default project config ------------------------------------
+    # -- Create default project config (before CLAUDE.md so we can read mode) --
 
     local config_file="$target_dir/.drift-audit/config.json"
+    local mode="offline"
     if [[ ! -f "$config_file" ]]; then
         mkdir -p "$target_dir/.drift-audit"
         cat > "$config_file" << 'CFGEOF'
 {
   "library": "~/.drift/library",
   "tags": [],
+  "mode": "offline",
   "sync": {
     "eslint-rule": "eslint-rules/",
     "adr": "docs/adr/",
@@ -167,8 +149,14 @@ drift_install_skill() {
 CFGEOF
         success "Created .drift-audit/config.json (edit tags to enable library sync)"
     else
+        # Read existing mode preference
+        mode="$(_read_config_mode "$config_file")"
         info ".drift-audit/config.json already exists — skipping."
     fi
+
+    # -- Update CLAUDE.md --------------------------------------------------
+
+    _refresh_claude_block "$target_dir" "$mode"
 
     # -- Suggest .gitignore entry ------------------------------------------
 
@@ -181,8 +169,35 @@ CFGEOF
     fi
 }
 
+_refresh_claude_block() {
+    local target_dir="$1"
+    local mode="${2:-offline}"
+    local claude_md="$target_dir/.claude/CLAUDE.md"
+    mkdir -p "$target_dir/.claude"
+
+    if [[ -f "$claude_md" ]]; then
+        if grep -q "<!-- drift-semantic -->" "$claude_md" 2>/dev/null; then
+            sed -i '/<!-- drift-semantic -->/,/<!-- \/drift-semantic -->/d' "$claude_md"
+            _append_claude_block "$claude_md" "$mode"
+            success "Updated drift block in CLAUDE.md (mode: $mode)"
+        elif grep -q "DRIFT_SEMANTIC" "$claude_md" 2>/dev/null; then
+            info "CLAUDE.md already references DRIFT_SEMANTIC — skipping."
+        else
+            _append_claude_block "$claude_md" "$mode"
+            success "Appended drift config to CLAUDE.md (mode: $mode)"
+        fi
+    else
+        _append_claude_block "$claude_md" "$mode"
+        success "Created .claude/CLAUDE.md (mode: $mode)"
+    fi
+}
+
 _append_claude_block() {
-    cat >> "$1" << 'BLOCK'
+    local file="$1"
+    local mode="${2:-offline}"
+
+    # Common header
+    cat >> "$file" << 'BLOCK'
 
 <!-- drift-semantic -->
 ## Drift
@@ -201,6 +216,28 @@ Drift skills (installed in `.claude/skills/`):
 - `drift-audit-semantic` — semantic duplication detection (tool-assisted)
 - `drift-unify` — batch refactoring toward canonical patterns
 - `drift-guard` — generate ESLint rules, ADRs, pattern docs
+BLOCK
+
+    # Mode-specific library section
+    if [[ "$mode" == "online" ]]; then
+        cat >> "$file" << 'BLOCK'
+
+Centralized artifact library (online mode — auto-sync enabled):
+```bash
+drift library init       # initialize ~/.drift/library
+drift library list       # show library contents
+drift library status     # compare library vs project
+```
+
+**Auto-sync behavior:** Library sync is automatic. Before starting any drift
+audit phase, run `drift library sync` to pull the latest artifacts from the
+centralized library. After completing any drift-guard phase, run
+`drift library publish` to share new artifacts back to the library.
+Do not ask for confirmation — sync silently as part of the pipeline.
+<!-- /drift-semantic -->
+BLOCK
+    else
+        cat >> "$file" << 'BLOCK'
 
 Centralized artifact library:
 ```bash
@@ -212,6 +249,31 @@ drift library status     # compare library vs project
 ```
 <!-- /drift-semantic -->
 BLOCK
+    fi
+}
+
+drift_online() {
+    _require_python3
+    local config_file
+    config_file="$(_find_project_config)"
+    local project_root
+    project_root="$(dirname "$(dirname "$config_file")")"
+
+    _set_config_mode "$config_file" "online"
+    _refresh_claude_block "$project_root" "online"
+    success "Online mode enabled — library sync is now automatic."
+}
+
+drift_offline() {
+    _require_python3
+    local config_file
+    config_file="$(_find_project_config)"
+    local project_root
+    project_root="$(dirname "$(dirname "$config_file")")"
+
+    _set_config_mode "$config_file" "offline"
+    _refresh_claude_block "$project_root" "offline"
+    success "Offline mode enabled — run 'drift library sync' and 'drift library publish' manually."
 }
 
 drift_library() {
@@ -319,6 +381,27 @@ drift_library_status() {
 # Library helpers
 # ---------------------------------------------------------------------------
 
+_read_config_mode() {
+    python3 -c "
+import json, sys
+with open(sys.argv[1]) as f:
+    print(json.load(f).get('mode', 'offline'))
+" "$1" 2>/dev/null || echo "offline"
+}
+
+_set_config_mode() {
+    python3 -c "
+import json, sys
+path, mode = sys.argv[1], sys.argv[2]
+with open(path) as f:
+    cfg = json.load(f)
+cfg['mode'] = mode
+with open(path, 'w') as f:
+    json.dump(cfg, f, indent=2)
+    f.write('\n')
+" "$1" "$2"
+}
+
 _require_python3() {
     if ! command -v python3 &>/dev/null; then
         error "python3 is required for library commands but was not found."
@@ -360,6 +443,12 @@ case "$COMMAND" in
         ;;
     library)
         drift_library "$@"
+        ;;
+    online)
+        drift_online "$@"
+        ;;
+    offline)
+        drift_offline "$@"
         ;;
     *)
         exec bash "$DRIFT_HOME/cli.sh" "$COMMAND" "$@"

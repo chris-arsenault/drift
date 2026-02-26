@@ -97,6 +97,21 @@ Compares library artifacts vs the current project:
 | `>` | Project is newer — run `drift library publish` |
 | `?` | Not synced (artifact exists in library but not in project) |
 
+## Online / Offline Mode
+
+By default, library sync is manual (offline mode). Enable **online mode** to have Claude automatically sync before audits and publish after guard phases:
+
+```bash
+drift online     # enable auto-sync
+drift offline    # back to manual
+```
+
+In online mode, the CLAUDE.md instructions tell Claude to:
+- Run `drift library sync` before starting any audit phase
+- Run `drift library publish` after completing any guard phase
+
+This happens silently as part of the pipeline — no confirmation prompts.
+
 ## Tag Strategy
 
 Tags should describe the tech stack and domain. Projects sharing similar stacks will share more artifacts.
