@@ -1,39 +1,25 @@
 # drift-semantic
 
-Semantic drift detection tool for TypeScript/React codebases. Finds duplicate functionality implemented under different names.
+## Critical Rules
 
-## Architecture
+- Weights MUST sum to 1.0 — after dropping inapplicable signals, renormalize remaining weights
+- Unit IDs use the format `relative/path.ts::ExportName` — never change this convention
+- `G` is the idiomatic variable name for networkx graphs — do not rename
+- Internal helpers use `_` prefix — they are not part of the public API
+- Do not add unit tests for the TypeScript extractor — all functions take ts-morph AST nodes and fixture cost outweighs value
+- Pipeline tests target complicated logic only: branching, regexes, math, similarity functions, hashing. No coverage targets.
 
-Three components composed by `cli.sh`:
-
-- **extractor/** — TypeScript (ts-morph). Parses AST, extracts semantic units and fingerprints. `npm run build && node dist/index.js`
-- **pipeline/** — Python (numpy, scipy, networkx). Pairwise scoring, clustering, report generation. `drift-semantic-pipeline`
-- **ast-grep/** — YAML rules. Structural pattern detection via `sg scan`
-
-## Development
+## Quick Reference
 
 ```bash
-make lint          # ESLint (extractor) + Ruff (pipeline)
-make lint-fix      # Auto-fix both
-make format        # Prettier (extractor) + Ruff format (pipeline)
-make test          # pytest (pipeline)
+make lint          # ESLint + Ruff
+make format        # Prettier + Ruff format
+make test          # pytest (pipeline only)
 ```
 
-## Testing Philosophy
+## Documentation Index
 
-Tests target **complicated logic only** — branching, regexes, math, similarity functions, hashing. Do not test:
-
-- Things clearly correct by inspection (simple getters, trivial mappings)
-- Code that requires expensive mocking (ts-morph AST nodes in the extractor)
-- Integration/E2E flows (the CLI orchestrator handles this)
-
-No coverage targets. The extractor has no unit tests because every exported function takes ts-morph `Node`/`SourceFile` objects — the cost of fixture setup outweighs the value. Pipeline tests live in `pipeline/tests/` and cover: vector math, similarity metrics, fingerprinting, type signature normalization, call graph analysis, dependency context, scoring/weight adaptation, and clustering.
-
-Run tests: `make test` or `cd pipeline && python3 -m pytest tests/ -v`
-
-## Conventions
-
-- Python: Ruff for linting and formatting, line length 100, target py310
-- TypeScript: ESLint 9 flat config + Prettier, cognitive-complexity raised to 30 for AST walkers
-- `G` is idiomatic for networkx graphs (suppressed N803/N806)
-- Pipeline uses `_` prefix for internal helpers (e.g., `_classify_type`, `_shannon_entropy`)
+- [docs/architecture.md](docs/architecture.md) — pipeline stages, similarity signals, weight adaptation, output artifacts
+- [docs/cli-reference.md](docs/cli-reference.md) — all commands with examples, environment variables
+- [docs/development.md](docs/development.md) — linting setup, testing philosophy, conventions
+- [docs/design.md](docs/design.md) — problem statement, design principles, full data flow

@@ -2,9 +2,17 @@
 
 [![CI](https://github.com/chris-arsenault/drift/actions/workflows/ci.yml/badge.svg)](https://github.com/chris-arsenault/drift/actions/workflows/ci.yml)
 
-Deterministic semantic drift detection for TypeScript/React codebases. Parses ASTs, computes structural fingerprints, scores pairwise similarity across 13 signals, and clusters similar code units.
+Deterministic semantic drift detection for TypeScript/React codebases. Finds the same functional concept implemented independently under different names — the kind of duplication that grep, ESLint, and traditional DRY tools miss entirely.
 
-Designed as the computational backbone for an LLM-driven semantic audit: the tool does the math, the LLM verifies clusters and interprets results.
+Three components named `ButtonHeader`, `ToolBar`, and `GridComponent` that all render "a horizontal bar of contextual action buttons." Three functions named `loadWorldData()`, `fetchEntities()`, and `buildStateForSlot()` that all load entity data from persistence.
+
+## Prerequisites
+
+- **Node.js** (for the TypeScript extractor)
+- **Python 3.10+** (for the scoring pipeline)
+- **ast-grep** (`sg`) — optional, adds structural pattern matching
+
+Dependencies auto-install on first run. No API keys, no databases, no Docker.
 
 ## Install
 
@@ -16,56 +24,31 @@ Or clone manually:
 
 ```bash
 git clone https://github.com/chris-arsenault/drift.git ~/.drift-semantic
-~/.drift-semantic/bin/drift version
+export PATH="$HOME/.drift-semantic/bin:$PATH"
 ```
 
-Then install the Claude Code skill in any project:
+## Quick Start
 
 ```bash
+# Install the Claude Code skill in your project
 cd /path/to/your/project
 drift install-skill
+
+# Run the full pipeline
+drift run --project .
 ```
 
-### Management
-
-```bash
-drift upgrade        # pull latest + refresh dependencies
-drift version        # show version and install path
-drift install-skill  # install/update skill in current project
-```
-
-### Uninstall
-
-```bash
-rm -rf ~/.drift-semantic
-```
-
-Remove the `# --- drift-semantic ---` block from your shell profile (`~/.bashrc`, `~/.zshrc`).
-
-## What it does
-
-Finds **the same functional concept implemented independently under different names** — the kind of duplication that grep, ESLint, and traditional DRY tools miss entirely. Three components named `ButtonHeader`, `ToolBar`, and `GridComponent` that all render "a horizontal bar of contextual action buttons." Three functions named `loadWorldData()`, `fetchEntities()`, and `buildStateForSlot()` that all load entity data from persistence.
-
-## Requirements
-
-- **Node.js** (for the TypeScript extractor, ts-morph)
-- **Python 3.10+** (for the pipeline: numpy, scipy, networkx, click)
-- **ast-grep** (`sg`) — optional, adds structural pattern matching signal
-
-Dependencies auto-install on first run. No API keys, no databases, no Docker.
+The tool writes structured output to `.drift-audit/semantic/`. The Claude Code skill reads this output and verifies whether clusters represent genuine semantic duplication.
 
 ## Usage
 
 ```bash
-# Full pipeline against a project
-drift run --project /path/to/your/project
+# Full pipeline
+drift run --project /path/to/project
 
 # Individual stages
 drift extract --project /path/to/project
 drift fingerprint
-drift typesig
-drift callgraph
-drift depcontext
 drift score
 drift cluster
 drift report
@@ -74,94 +57,52 @@ drift report
 drift inspect unit "src/components/ToolBar.tsx::ToolBar"
 drift inspect similar "src/components/ToolBar.tsx::ToolBar" --top 10
 drift inspect cluster cluster-001
-drift inspect consumers "src/hooks/useDataLoader.ts::useDataLoader"
 
 # Search the index
 drift search calls "src/lib/api.ts::fetchEntities"
 drift search type-like "src/hooks/useDataLoader.ts::useDataLoader"
-drift search co-occurs-with "src/components/Modal.tsx::Modal"
-
-# Optional: embed purpose statements via local Ollama
-drift embed --ollama-url http://localhost:11434 --model nomic-embed-text
 ```
 
-Output goes to `.drift-audit/semantic/` by default.
+See [docs/cli-reference.md](docs/cli-reference.md) for the full command list.
 
-## Architecture
+## How It Works
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│  cli.sh (bash orchestrator)                                      │
-│                                                                  │
-│  extract → fingerprint → typesig → callgraph → depcontext        │
-│                    ↓                                             │
-│              score → cluster → report                            │
-│                                                                  │
-│  Optional: embed (requires Ollama)                               │
-└──────────────────────────────────────────────────────────────────┘
+extract → fingerprint → typesig → callgraph → depcontext
+                              ↓
+                        score → cluster → report
 ```
 
-Three components:
+1. **Extract** — TypeScript AST parsing via ts-morph. Extracts all exported code units with type info, JSX structure, hook usage, imports, call graph, consumer graph, and behavior markers.
+2. **Fingerprint** — Computes structural fingerprints: JSX hashes, hook profile vectors, import constellations (IDF-weighted), behavior flags.
+3. **Score** — Pairwise similarity across 13 signals with adaptive weight matrix. Weights adjust based on available signals and unit kinds.
+4. **Cluster** — Graph-based community detection (connected components + greedy modularity).
+5. **Report** — Markdown report, drift manifest, dependency atlas.
 
-### extractor/ — TypeScript (ts-morph)
+The tool is fully deterministic — same input, same output. The LLM layer (Claude Code skill) is optional and external: it reads the tool's structured output, verifies clusters, and writes findings back.
 
-Parses the full codebase AST and extracts all exported code units with:
-- Type information (parameters, return types, generics)
-- JSX structure (tree with map/conditional markers)
-- Hook usage (React built-in + custom hooks)
-- Import analysis (categorized: framework/external/internal)
-- Call graph (outbound callees with context classification)
-- Consumer graph (inbound: who imports this unit)
-- Behavior markers (async, error handling, loading state, etc.)
+See [docs/architecture.md](docs/architecture.md) for pipeline details, similarity signals, and output artifacts.
 
-### pipeline/ — Python (numpy, scipy, networkx, click)
+## Management
 
-Processes extracted units through:
-- **Fingerprinting** — JSX hash, hook profile vector, import constellation (IDF-weighted), behavior flags, data access patterns
-- **Type signatures** — normalized hashes with identifiers stripped (strict/loose/arity matching)
-- **Call graph vectors** — callee sets (IDF-weighted), sequence hashes, chain pattern hashes, depth profiles
-- **Dependency context** — consumer profiles, co-occurrence vectors, neighborhood hashes at radius 1 and 2
-- **Scoring** — pairwise similarity across all signals with adaptive weight matrix (adapts to available signals and unit kinds)
-- **Clustering** — graph-based community detection (connected components + greedy modularity for large clusters)
-- **Reporting** — markdown report, drift manifest entries, dependency atlas for visualization
+```bash
+drift version        # Show version and install path
+drift upgrade        # Pull latest + refresh dependencies
+drift install-skill  # Install/update skill in current project
+```
 
-### ast-grep/ — YAML rules + bash runner
+## Uninstall
 
-Structural pattern matching as an additive scoring signal. Detects: button bars, list-with-map, modal wrappers, detail panels, Zustand stores, multi-useState, Dexie queries, fetch-with-state, store selectors, error handling, worker messages, async callbacks, promise chains.
+```bash
+rm -rf ~/.drift-semantic
+```
 
-## Similarity Signals
+Remove the `# --- drift-semantic ---` block from your shell profile (`~/.bashrc`, `~/.zshrc`).
 
-| Signal | Method | Notes |
-|--------|--------|-------|
-| typeSignature | Hash match (strict→1.0, loose→0.7, arity→0.4) | |
-| jsxStructure | Tree similarity (exact hash, fuzzy hash, or node matching) | Components only |
-| hookProfile | Cosine similarity on hook call count vectors | Components/hooks only |
-| importConstellation | Cosine similarity on IDF-weighted import vectors | |
-| dataAccess | Jaccard on data source/store sets | |
-| behaviorFlags | Normalized Hamming distance | |
-| calleeSet | Cosine similarity on IDF-weighted callee vectors | |
-| callSequence | LCS-based or hash match on ordered call sequences | |
-| consumerSet | Jaccard on consumer sets + cross-directory bonus | |
-| coOccurrence | Cosine similarity on co-occurrence vectors | |
-| neighborhood | Hash match at radius 1 (1.0) or radius 2 (0.6) | |
-| structuralPattern | Jaccard on ast-grep pattern tags | Optional |
-| semantic | Cosine similarity on Ollama embeddings | Optional, requires Ollama |
+## Documentation
 
-Weights adapt automatically based on available signals (embeddings present or not) and unit kind pairs (component-only signals drop for non-component pairs, remaining weights renormalize).
-
-## LLM Integration
-
-The tool is fully deterministic by default — same input, same output. The LLM layer is optional and handled externally:
-
-1. **Tool writes** `clusters.json` — structurally similar groups
-2. **LLM reads** cluster members' source code, assesses semantic equivalence
-3. **LLM writes** `findings.json` with verdicts (DUPLICATE/OVERLAPPING/RELATED/FALSE_POSITIVE)
-4. **Tool reads** findings via `ingest-findings`, regenerates report with verdicts
-
-Purpose statements follow the same pattern: LLM writes them, tool embeds via Ollama (if available), and incorporates as an additional scoring signal.
-
-See `skill/SKILL.md` for the full LLM-facing instruction set that orchestrates the tool.
-
-## Design
-
-See `docs/design.md` for the full architecture document including data flow, weight matrices, and interaction patterns.
+- [Architecture](docs/architecture.md) — pipeline stages, similarity signals, output artifacts
+- [CLI Reference](docs/cli-reference.md) — full command list with examples
+- [Development](docs/development.md) — linting, testing, conventions
+- [Design Document](docs/design.md) — problem statement, design principles, data flow
+- [Skill Definition](skill/SKILL.md) — Claude Code agent instructions
