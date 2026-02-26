@@ -1,0 +1,188 @@
+#!/usr/bin/env bash
+# drift — wrapper CLI for drift-semantic.
+#
+# Proxies all pipeline commands to cli.sh and adds management commands:
+#   drift version          Show version and install path
+#   drift upgrade          Pull latest and refresh dependencies
+#   drift self-update      Alias for upgrade
+#   drift install-skill    Install Claude Code skill to a project
+#
+# All other commands pass through to cli.sh unchanged.
+
+set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Resolve install directory
+# ---------------------------------------------------------------------------
+
+DRIFT_HOME="${DRIFT_SEMANTIC:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+
+if [[ ! -f "$DRIFT_HOME/cli.sh" ]]; then
+    echo "ERROR: drift-semantic installation not found at $DRIFT_HOME" >&2
+    echo "Install: curl -fsSL https://raw.githubusercontent.com/chris-arsenault/drift/main/install.sh | bash" >&2
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Output helpers
+# ---------------------------------------------------------------------------
+
+if [[ -t 2 ]]; then
+    _R='\033[0m' _G='\033[0;32m' _Y='\033[0;33m' _B='\033[0;34m' _RED='\033[0;31m'
+else
+    _R='' _G='' _Y='' _B='' _RED=''
+fi
+
+info()    { printf "${_B}[*]${_R} %s\n" "$*" >&2; }
+success() { printf "${_G}[+]${_R} %s\n" "$*" >&2; }
+warn()    { printf "${_Y}[!]${_R} %s\n" "$*" >&2; }
+error()   { printf "${_RED}[-]${_R} %s\n" "$*" >&2; }
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+drift_version() {
+    local sha date ver
+    sha="$(git -C "$DRIFT_HOME" rev-parse --short HEAD 2>/dev/null || echo "unknown")"
+    date="$(git -C "$DRIFT_HOME" log -1 --format=%cd --date=short 2>/dev/null || echo "unknown")"
+    ver="$(sed -n 's/^version *= *"\(.*\)"/\1/p' "$DRIFT_HOME/pipeline/pyproject.toml" 2>/dev/null || echo "0.0.0")"
+    echo "drift-semantic $ver ($sha $date)"
+    echo "Install: $DRIFT_HOME"
+}
+
+drift_upgrade() {
+    info "Upgrading drift-semantic..."
+
+    if [[ ! -d "$DRIFT_HOME/.git" ]]; then
+        error "Not a git repository: $DRIFT_HOME"
+        error "Cannot upgrade a non-git installation."
+        exit 1
+    fi
+
+    # Save dependency file checksums before pull
+    local old_pkg old_pyproject
+    old_pkg="$(cksum "$DRIFT_HOME/extractor/package.json" 2>/dev/null || echo "")"
+    old_pyproject="$(cksum "$DRIFT_HOME/pipeline/pyproject.toml" 2>/dev/null || echo "")"
+
+    # Pull latest
+    if ! git -C "$DRIFT_HOME" pull --ff-only 2>&1; then
+        error "git pull failed. You may have local modifications."
+        error "Run: cd $DRIFT_HOME && git status"
+        exit 1
+    fi
+
+    # Compare checksums — only clear deps if they changed
+    local new_pkg new_pyproject
+    new_pkg="$(cksum "$DRIFT_HOME/extractor/package.json" 2>/dev/null || echo "")"
+    new_pyproject="$(cksum "$DRIFT_HOME/pipeline/pyproject.toml" 2>/dev/null || echo "")"
+
+    if [[ "$old_pkg" != "$new_pkg" ]] && [[ -d "$DRIFT_HOME/extractor/node_modules" ]]; then
+        warn "package.json changed — clearing node_modules"
+        rm -rf "$DRIFT_HOME/extractor/node_modules"
+    fi
+
+    if [[ "$old_pyproject" != "$new_pyproject" ]] && [[ -d "$DRIFT_HOME/pipeline/.venv" ]]; then
+        warn "pyproject.toml changed — clearing venv"
+        rm -rf "$DRIFT_HOME/pipeline/.venv"
+    fi
+
+    success "Upgrade complete."
+}
+
+drift_install_skill() {
+    local target_dir="${1:-.}"
+
+    if [[ ! -d "$target_dir" ]]; then
+        error "Directory does not exist: $target_dir"
+        exit 1
+    fi
+
+    target_dir="$(cd "$target_dir" && pwd)"
+
+    local skill_src="$DRIFT_HOME/skill/SKILL.md"
+    if [[ ! -f "$skill_src" ]]; then
+        error "SKILL.md not found in installation. Re-run: drift upgrade"
+        exit 1
+    fi
+
+    # -- Install skill definition ------------------------------------------
+
+    local skill_dest="$target_dir/.claude/skills/drift-audit-semantic"
+    mkdir -p "$skill_dest"
+    cp "$skill_src" "$skill_dest/SKILL.md"
+    success "Skill installed: .claude/skills/drift-audit-semantic/SKILL.md"
+
+    # -- Update CLAUDE.md --------------------------------------------------
+
+    local claude_md="$target_dir/.claude/CLAUDE.md"
+    mkdir -p "$target_dir/.claude"
+
+    if [[ -f "$claude_md" ]]; then
+        if grep -q "DRIFT_SEMANTIC" "$claude_md" 2>/dev/null; then
+            info "CLAUDE.md already references DRIFT_SEMANTIC — skipping."
+        elif grep -q "<!-- drift-semantic -->" "$claude_md" 2>/dev/null; then
+            # Replace existing block between markers
+            sed -i '/<!-- drift-semantic -->/,/<!-- \/drift-semantic -->/d' "$claude_md"
+            _append_claude_block "$claude_md"
+            success "Updated drift-semantic block in CLAUDE.md"
+        else
+            _append_claude_block "$claude_md"
+            success "Appended drift-semantic config to CLAUDE.md"
+        fi
+    else
+        _append_claude_block "$claude_md"
+        success "Created .claude/CLAUDE.md"
+    fi
+
+    # -- Suggest .gitignore entry ------------------------------------------
+
+    local gitignore="$target_dir/.gitignore"
+    if [[ -f "$gitignore" ]]; then
+        if ! grep -q '\.drift-audit' "$gitignore" 2>/dev/null; then
+            echo ""
+            warn "Consider adding '.drift-audit/' to your .gitignore"
+        fi
+    fi
+}
+
+_append_claude_block() {
+    cat >> "$1" << 'BLOCK'
+
+<!-- drift-semantic -->
+## Drift Semantic
+
+`drift-semantic` is installed at `~/.drift-semantic` (`$DRIFT_SEMANTIC`).
+
+Run a semantic drift audit:
+```bash
+drift run --project .
+```
+
+Or use the `drift-audit-semantic` skill: the skill definition is in
+`.claude/skills/drift-audit-semantic/SKILL.md`.
+<!-- /drift-semantic -->
+BLOCK
+}
+
+# ---------------------------------------------------------------------------
+# Dispatch
+# ---------------------------------------------------------------------------
+
+COMMAND="${1:-help}"
+shift || true
+
+case "$COMMAND" in
+    version|--version|-v|-V)
+        drift_version
+        ;;
+    upgrade|self-update)
+        drift_upgrade
+        ;;
+    install-skill)
+        drift_install_skill "$@"
+        ;;
+    *)
+        exec bash "$DRIFT_HOME/cli.sh" "$COMMAND" "$@"
+        ;;
+esac
