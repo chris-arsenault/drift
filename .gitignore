@@ -1,0 +1,12 @@
+# Dependencies
+extractor/node_modules/
+extractor/package-lock.json
+pipeline/.venv/
+pipeline/src/*.egg-info/
+
+# Python
+__pycache__/
+*.pyc
+
+# Pipeline output
+.drift-audit/

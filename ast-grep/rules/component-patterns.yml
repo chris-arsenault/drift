@@ -1,0 +1,107 @@
+# Component structural patterns for semantic drift detection.
+# Each rule detects a reusable UI pattern that suggests functional similarity.
+#
+# language: javascript covers .js/.jsx files; tsx covers .ts/.tsx files.
+# Dual-language rules ensure both file types are scanned.
+# Rule IDs are used directly as pattern tags (foo-jsx and foo-tsx are merged
+# by run-patterns.sh into a single "foo" tag).
+
+# -- button-bar ---------------------------------------------------------------
+# Container with multiple sibling <button> elements — action bars, toolbars.
+# Matches a <button> that is immediately followed by another <button>,
+# scoped to any JSX element parent.
+id: button-bar-jsx
+language: javascript
+rule:
+  pattern: <button $$$>$$$</button>
+  precedes:
+    pattern: <button $$$>$$$</button>
+  inside:
+    kind: jsx_element
+    stopBy: end
+---
+id: button-bar-tsx
+language: tsx
+rule:
+  pattern: <button $$$>$$$</button>
+  precedes:
+    pattern: <button $$$>$$$</button>
+  inside:
+    kind: jsx_element
+    stopBy: end
+
+---
+# -- list-with-map ------------------------------------------------------------
+# .map() call inside a JSX expression — repeated element rendering.
+id: list-with-map-jsx
+language: javascript
+rule:
+  pattern: $DATA.map($$$)
+  inside:
+    kind: jsx_expression
+---
+id: list-with-map-tsx
+language: tsx
+rule:
+  pattern: $DATA.map($$$)
+  inside:
+    kind: jsx_expression
+
+---
+# -- modal-wrapper -------------------------------------------------------------
+# Div whose className contains "overlay", "backdrop", or "modal" — modal/dialog
+# containers with backdrop overlay patterns.
+id: modal-wrapper-jsx
+language: javascript
+rule:
+  pattern: <div className="$CLS">$$$</div>
+constraints:
+  CLS:
+    regex: "overlay|backdrop|modal"
+---
+id: modal-wrapper-tsx
+language: tsx
+rule:
+  pattern: <div className="$CLS">$$$</div>
+constraints:
+  CLS:
+    regex: "overlay|backdrop|modal"
+
+---
+# -- detail-panel --------------------------------------------------------------
+# Component rendering labeled key-value pairs — entity detail views, metadata
+# panels. Matches a JSX element that contains both a "label"-classed child and
+# a "value"-classed child.
+id: detail-panel-jsx
+language: javascript
+rule:
+  all:
+    - kind: jsx_element
+    - has:
+        pattern: <$TAG className="$CLS">$$$</$TAG>
+        stopBy: end
+    - has:
+        pattern: <$TAG2 className="$CLS2">$$$</$TAG2>
+        stopBy: end
+constraints:
+  CLS:
+    regex: "label|key|term|caption"
+  CLS2:
+    regex: "value|datum|detail|content"
+---
+id: detail-panel-tsx
+language: tsx
+rule:
+  all:
+    - kind: jsx_element
+    - has:
+        pattern: <$TAG className="$CLS">$$$</$TAG>
+        stopBy: end
+    - has:
+        pattern: <$TAG2 className="$CLS2">$$$</$TAG2>
+        stopBy: end
+constraints:
+  CLS:
+    regex: "label|key|term|caption"
+  CLS2:
+    regex: "value|datum|detail|content"

@@ -1,0 +1,67 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "drift-semantic"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = ["numpy", "scipy", "click", "networkx"]
+
+[project.optional-dependencies]
+ollama = ["httpx"]
+dev = ["ruff>=0.9.0", "pytest>=8.0"]
+
+[project.scripts]
+drift-semantic-pipeline = "drift_semantic.__main__:cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+src = ["src"]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "N",      # pep8-naming
+    "UP",     # pyupgrade
+    "B",      # flake8-bugbear
+    "C90",    # mccabe complexity
+    "SIM",    # flake8-simplify
+    "RUF",    # ruff-specific
+    "PLR",    # pylint refactoring
+]
+ignore = [
+    "E501",    # line too long — handled by formatter
+    "PLR2004", # magic-value-comparison
+    "PLR0913", # too-many-arguments — scoring functions legitimately need many params
+    "PLR0912", # too-many-branches — inherent in report/cluster rendering
+    "C901",    # too-complex — AST processing and scoring pipeline are unavoidably complex
+    "N803",    # argument-name — G is idiomatic for networkx graphs
+    "N806",    # variable-name — G is idiomatic for networkx graphs
+    "SIM105",  # contextlib.suppress — try/except/pass is clearer for optional artifacts
+    "SIM108",  # ternary — if/else is more readable for nested dict access patterns
+    "B905",    # zip-strict — deliberate truncation in tree matching
+]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.pylint]
+max-statements = 75
+max-args = 8
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"

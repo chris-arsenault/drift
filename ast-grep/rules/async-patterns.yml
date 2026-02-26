@@ -1,0 +1,59 @@
+# Async and worker patterns for semantic drift detection.
+#
+# Rule IDs ending in -jsx/-tsx/-ts are merged to a single tag by run-patterns.sh.
+
+# -- worker-message ------------------------------------------------------------
+# Worker communication: postMessage() or onmessage assignment.
+# Identifies files that participate in Worker/SharedWorker messaging.
+id: worker-message-tsx
+language: tsx
+rule:
+  any:
+    - pattern: $OBJ.postMessage($$$)
+    - pattern: $OBJ.onmessage = $$$
+---
+id: worker-message-ts
+language: typescript
+rule:
+  any:
+    - pattern: $OBJ.postMessage($$$)
+    - pattern: $OBJ.onmessage = $$$
+---
+id: worker-message-jsx
+language: javascript
+rule:
+  any:
+    - pattern: $OBJ.postMessage($$$)
+    - pattern: $OBJ.onmessage = $$$
+
+---
+# -- async-callback ------------------------------------------------------------
+# useCallback wrapping an async arrow function — the predominant async handler
+# pattern in this codebase.
+id: async-callback-jsx
+language: javascript
+rule:
+  pattern: useCallback(async ($$$) => {$$$}, $$$)
+---
+id: async-callback-tsx
+language: tsx
+rule:
+  pattern: useCallback(async ($$$) => {$$$}, $$$)
+
+---
+# -- promise-chain -------------------------------------------------------------
+# .then() promise chain — alternative to async/await.
+id: promise-chain-jsx
+language: javascript
+rule:
+  pattern: $EXPR.then($$$)
+---
+id: promise-chain-tsx
+language: tsx
+rule:
+  pattern: $EXPR.then($$$)
+---
+id: promise-chain-ts
+language: typescript
+rule:
+  pattern: $EXPR.then($$$)

@@ -1,0 +1,88 @@
+# Data fetching and loading patterns for semantic drift detection.
+#
+# language: javascript covers .js/.jsx; tsx covers .ts/.tsx; typescript covers
+# pure .ts files (e.g. repositories, services).
+# Rule IDs ending in -jsx/-tsx/-ts are merged to a single tag by run-patterns.sh.
+
+# -- dexie-query ---------------------------------------------------------------
+# Dexie.js IndexedDB queries: .where().equals(), .toArray(), .count(), .delete().
+# These chains appear in repository modules for persistence layer access.
+id: dexie-query-ts
+language: typescript
+rule:
+  any:
+    - pattern: $OBJ.where($$$).equals($$$)
+    - pattern: $OBJ.where($$$).equals($$$).toArray($$$)
+    - pattern: $OBJ.where($$$).equals($$$).count($$$)
+    - pattern: $OBJ.where($$$).equals($$$).delete($$$)
+    - pattern: $OBJ.where($$$).toArray($$$)
+    - pattern: $OBJ.toArray($$$)
+---
+id: dexie-query-tsx
+language: tsx
+rule:
+  any:
+    - pattern: $OBJ.where($$$).equals($$$)
+    - pattern: $OBJ.where($$$).equals($$$).toArray($$$)
+    - pattern: $OBJ.where($$$).equals($$$).count($$$)
+    - pattern: $OBJ.where($$$).equals($$$).delete($$$)
+    - pattern: $OBJ.where($$$).toArray($$$)
+    - pattern: $OBJ.toArray($$$)
+
+---
+# -- fetch-with-state ----------------------------------------------------------
+# Component combining useState + useEffect — the classic data-loading-on-mount
+# pattern (local state + side-effect for fetching).
+id: fetch-with-state-jsx
+language: javascript
+rule:
+  kind: jsx_element
+  inside:
+    stopBy: end
+    any:
+      - kind: function_declaration
+      - kind: arrow_function
+    all:
+      - has:
+          pattern: useState($$$)
+          stopBy: end
+      - has:
+          pattern: useEffect($$$)
+          stopBy: end
+---
+id: fetch-with-state-tsx
+language: tsx
+rule:
+  kind: jsx_element
+  inside:
+    stopBy: end
+    any:
+      - kind: function_declaration
+      - kind: arrow_function
+    all:
+      - has:
+          pattern: useState($$$)
+          stopBy: end
+      - has:
+          pattern: useEffect($$$)
+          stopBy: end
+
+---
+# -- store-selector ------------------------------------------------------------
+# Zustand store selector: useXxxStore(state => state.field) or useXxxStore().
+# Matches calls whose callee name matches the useXxxStore naming convention.
+id: store-selector-jsx
+language: javascript
+rule:
+  pattern: $STORE($SELECTOR)
+constraints:
+  STORE:
+    regex: "^use\\w+Store$"
+---
+id: store-selector-tsx
+language: tsx
+rule:
+  pattern: $STORE($SELECTOR)
+constraints:
+  STORE:
+    regex: "^use\\w+Store$"

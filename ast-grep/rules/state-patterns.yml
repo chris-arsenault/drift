@@ -1,0 +1,45 @@
+# State management patterns for semantic drift detection.
+#
+# Rule IDs ending in -jsx/-tsx/-ts are merged to a single tag by run-patterns.sh.
+
+# -- zustand-create ------------------------------------------------------------
+# Zustand store creation: create<T>((set) => ({...})) or create((set) => ({...})).
+# Identifies modules that define reactive stores.
+id: zustand-create-ts
+language: typescript
+rule:
+  any:
+    - pattern: create<$T>($$$)
+    - pattern: create($$$)
+---
+id: zustand-create-tsx
+language: tsx
+rule:
+  any:
+    - pattern: create<$T>($$$)
+    - pattern: create($$$)
+
+---
+# -- multi-useState ------------------------------------------------------------
+# useState call inside a function body — individual occurrences are counted per
+# file by run-patterns.sh, which tags files with 3+ matches as multi-useState
+# (indicating complex local state).
+id: multi-useState-jsx
+language: javascript
+rule:
+  pattern: useState($$$)
+  inside:
+    stopBy: end
+    any:
+      - kind: function_declaration
+      - kind: arrow_function
+---
+id: multi-useState-tsx
+language: tsx
+rule:
+  pattern: useState($$$)
+  inside:
+    stopBy: end
+    any:
+      - kind: function_declaration
+      - kind: arrow_function

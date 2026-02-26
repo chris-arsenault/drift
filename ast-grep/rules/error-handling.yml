@@ -1,0 +1,39 @@
+# Error handling patterns for semantic drift detection.
+#
+# Rule IDs ending in -jsx/-tsx/-ts are merged to a single tag by run-patterns.sh.
+
+# -- try-catch-block -----------------------------------------------------------
+# try/catch statements — used in async operations, repository calls, and
+# fallback logic. Matches any try_statement node.
+id: try-catch-block-jsx
+language: javascript
+rule:
+  kind: try_statement
+---
+id: try-catch-block-tsx
+language: tsx
+rule:
+  kind: try_statement
+---
+id: try-catch-block-ts
+language: typescript
+rule:
+  kind: try_statement
+
+---
+# -- error-state-render --------------------------------------------------------
+# Conditional rendering based on an error variable: {error && <...>}.
+# Indicates a component that surfaces error state to the user.
+id: error-state-render-jsx
+language: javascript
+rule:
+  pattern: error && $JSX
+  inside:
+    kind: jsx_expression
+---
+id: error-state-render-tsx
+language: tsx
+rule:
+  pattern: error && $JSX
+  inside:
+    kind: jsx_expression
