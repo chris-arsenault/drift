@@ -13,6 +13,8 @@ from pathlib import Path
 
 from .io_utils import read_artifact, read_code_units, write_artifact
 
+MAX_TITLE_MEMBERS = 4
+
 
 def _load_optional(name: str, output_dir: Path) -> dict | list | None:
     """Load an artifact, returning None if it doesn't exist."""
@@ -62,11 +64,11 @@ def _render_cluster_section(
         title = finding["role"]
     else:
         member_names = []
-        for uid in members[:4]:
+        for uid in members[:MAX_TITLE_MEMBERS]:
             u = units_by_id.get(uid, {})
             member_names.append(u.get("name", uid.split("::")[-1] if "::" in uid else uid))
-        if len(members) > 4:
-            member_names.append(f"+{len(members) - 4} more")
+        if len(members) > MAX_TITLE_MEMBERS:
+            member_names.append(f"+{len(members) - MAX_TITLE_MEMBERS} more")
         title = ", ".join(member_names)
 
     lines.append(f"### {cid}: {title}")
@@ -93,29 +95,70 @@ def _render_cluster_section(
 
     # Finding details or pending note
     if finding:
-        verdict = finding.get("verdict", "")
-        confidence = finding.get("confidence", "")
-        lines.append(f"**Verdict:** {verdict} (confidence: {confidence})")
-
-        if finding.get("sharedBehavior"):
-            lines.append(f"**Shared Behavior:** {finding['sharedBehavior']}")
-        if finding.get("meaningfulDifferences"):
-            lines.append(f"**Meaningful Differences:** {finding['meaningfulDifferences']}")
-        if finding.get("accidentalDifferences"):
-            lines.append(f"**Accidental Differences:** {finding['accidentalDifferences']}")
-        if finding.get("featureGaps"):
-            lines.append(f"**Feature Gaps:** {finding['featureGaps']}")
-        if finding.get("consolidationComplexity"):
-            lines.append(f"**Consolidation Complexity:** {finding['consolidationComplexity']}")
-        if finding.get("consolidationReasoning"):
-            lines.append(f"**Consolidation Reasoning:** {finding['consolidationReasoning']}")
-        if finding.get("consumerImpact"):
-            lines.append(f"**Consumer Impact:** {finding['consumerImpact']}")
-        lines.append("")
+        lines.extend(_render_finding_details(finding))
     else:
         lines.append("*Pending semantic verification*")
         lines.append("")
 
+    return lines
+
+
+_FINDING_FIELDS = [
+    ("sharedBehavior", "Shared Behavior"),
+    ("meaningfulDifferences", "Meaningful Differences"),
+    ("accidentalDifferences", "Accidental Differences"),
+    ("featureGaps", "Feature Gaps"),
+    ("consolidationComplexity", "Consolidation Complexity"),
+    ("consolidationReasoning", "Consolidation Reasoning"),
+    ("consumerImpact", "Consumer Impact"),
+]
+
+
+def _render_finding_details(finding: dict) -> list[str]:
+    """Render a finding's verdict and detail fields as markdown lines."""
+    lines = [
+        f"**Verdict:** {finding.get('verdict', '')} (confidence: {finding.get('confidence', '')})"
+    ]
+    for key, label in _FINDING_FIELDS:
+        if finding.get(key):
+            lines.append(f"**{label}:** {finding[key]}")
+    lines.append("")
+    return lines
+
+
+def _render_verified_clusters(
+    clusters: list[dict],
+    units_by_id: dict[str, dict],
+    findings_by_cluster: dict[str, dict],
+) -> list[str]:
+    """Group clusters by verdict and render each group."""
+    verdict_order = ["DUPLICATE", "OVERLAPPING", "RELATED", "FALSE_POSITIVE"]
+    by_verdict: dict[str, list[tuple[dict, dict]]] = {v: [] for v in verdict_order}
+    unverified: list[dict] = []
+
+    for cluster in clusters:
+        finding = findings_by_cluster.get(cluster.get("id", ""))
+        if finding:
+            verdict = finding.get("verdict", "RELATED")
+            by_verdict.setdefault(verdict, []).append((cluster, finding))
+        else:
+            unverified.append(cluster)
+
+    lines: list[str] = []
+    for verdict in verdict_order:
+        group = by_verdict.get(verdict, [])
+        if not group:
+            continue
+        lines.append(f"## {verdict} ({len(group)})")
+        lines.append("")
+        for cluster, finding in group:
+            lines.extend(_render_cluster_section(cluster, units_by_id, finding))
+
+    if unverified:
+        lines.append(f"## Unverified ({len(unverified)})")
+        lines.append("")
+        for cluster in unverified:
+            lines.extend(_render_cluster_section(cluster, units_by_id, None))
     return lines
 
 
@@ -139,37 +182,7 @@ def _generate_markdown(
     lines.append("")
 
     if findings_by_cluster:
-        # Group clusters by verdict
-        verdict_order = ["DUPLICATE", "OVERLAPPING", "RELATED", "FALSE_POSITIVE"]
-        by_verdict: dict[str, list[tuple[dict, dict]]] = {v: [] for v in verdict_order}
-        unverified: list[dict] = []
-
-        for cluster in clusters:
-            cid = cluster.get("id", "")
-            finding = findings_by_cluster.get(cid)
-            if finding:
-                verdict = finding.get("verdict", "RELATED")
-                if verdict in by_verdict:
-                    by_verdict[verdict].append((cluster, finding))
-                else:
-                    by_verdict.setdefault(verdict, []).append((cluster, finding))
-            else:
-                unverified.append(cluster)
-
-        for verdict in verdict_order:
-            group = by_verdict.get(verdict, [])
-            if not group:
-                continue
-            lines.append(f"## {verdict} ({len(group)})")
-            lines.append("")
-            for cluster, finding in group:
-                lines.extend(_render_cluster_section(cluster, units_by_id, finding))
-
-        if unverified:
-            lines.append(f"## Unverified ({len(unverified)})")
-            lines.append("")
-            for cluster in unverified:
-                lines.extend(_render_cluster_section(cluster, units_by_id, None))
+        lines.extend(_render_verified_clusters(clusters, units_by_id, findings_by_cluster))
     else:
         lines.append("## Preliminary Clusters")
         lines.append("")
@@ -271,7 +284,9 @@ def _build_manifest_entry(
             f"Structurally similar units (avg similarity: {cluster.get('avgSimilarity', 0):.2f})"
         )
         recommendation = "Awaiting semantic verification."
-        analysis = f"Avg similarity: {cluster.get('avgSimilarity', 0):.2f}, spread: {cluster.get('directorySpread', 0)} dirs"
+        avg_sim = cluster.get("avgSimilarity", 0)
+        spread = cluster.get("directorySpread", 0)
+        analysis = f"Avg similarity: {avg_sim:.2f}, spread: {spread} dirs"
 
     return {
         "id": f"semantic-{cluster['id']}",

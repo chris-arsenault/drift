@@ -4,10 +4,11 @@ THE CORE. Reads all Stage 2 artifacts, computes pairwise similarity for all
 viable unit pairs, and emits scored pairs above a configurable threshold.
 """
 
+import contextlib
 import sys
 from pathlib import Path
 
-from .io_utils import read_artifact, read_code_units, write_artifact
+from .io_utils import read_artifact, read_code_units, resolve_consumer_id, write_artifact
 from .similarity import (
     normalized_hamming,
     tree_edit_distance_normalized,
@@ -261,13 +262,9 @@ def sig_consumer_set(uid_a: str, uid_b: str, units_by_id: dict[str, dict]) -> fl
 
 def _extract_consumer_ids(unit: dict) -> set[str]:
     """Extract consumer unit IDs from a unit dict."""
-    consumers = unit.get("consumers", [])
     ids: set[str] = set()
-    for c in consumers:
-        if isinstance(c, dict):
-            cid = c.get("id", c.get("unitId", ""))
-        else:
-            cid = str(c)
+    for c in unit.get("consumers", []):
+        cid = resolve_consumer_id(c)
         if cid:
             ids.add(cid)
     return ids
@@ -309,52 +306,73 @@ def sig_structural_pattern(uid_a: str, uid_b: str, patterns: dict[str, list[str]
 # ---------------------------------------------------------------------------
 
 
+def _load_scoring_artifacts(output_dir: Path) -> dict:
+    """Load all Stage 2 artifacts needed for scoring."""
+    artifacts = {
+        "units": read_code_units(output_dir),
+        "fps": read_artifact("structural-fingerprints.json", output_dir),
+        "typesigs": read_artifact("type-signatures.json", output_dir),
+        "cg": read_artifact("call-graph.json", output_dir),
+        "dc": read_artifact("dependency-context.json", output_dir),
+        "embeddings": {},
+        "structural_patterns": {},
+    }
+    with contextlib.suppress(FileNotFoundError):
+        artifacts["embeddings"] = read_artifact("semantic-embeddings.json", output_dir)
+    with contextlib.suppress(FileNotFoundError):
+        artifacts["structural_patterns"] = read_artifact("structural-patterns.json", output_dir)
+    return artifacts
+
+
+# Map signal name → (function, artifact keys)
+_SIGNAL_FUNCS = {
+    "semantic": lambda a, b, art: sig_semantic(a, b, art["embeddings"]),
+    "typeSignature": lambda a, b, art: sig_type_signature(a, b, art["typesigs"]),
+    "jsxStructure": lambda a, b, art: sig_jsx_structure(a, b, art["fps"], art["units_by_id"]),
+    "hookProfile": lambda a, b, art: sig_hook_profile(a, b, art["fps"]),
+    "imports": lambda a, b, art: sig_imports(a, b, art["fps"]),
+    "dataAccess": lambda a, b, art: sig_data_access(a, b, art["fps"]),
+    "behavior": lambda a, b, art: sig_behavior(a, b, art["fps"]),
+    "calleeSet": lambda a, b, art: sig_callee_set(a, b, art["cg"]),
+    "callSequence": lambda a, b, art: sig_call_sequence(a, b, art["cg"]),
+    "consumerSet": lambda a, b, art: sig_consumer_set(a, b, art["units_by_id"]),
+    "coOccurrence": lambda a, b, art: sig_cooccurrence(a, b, art["dc"]),
+    "neighborhood": lambda a, b, art: sig_neighborhood(a, b, art["dc"]),
+    "structuralPattern": lambda a, b, art: sig_structural_pattern(a, b, art["structural_patterns"]),
+}
+
+
+def _score_pair(
+    uid_a: str,
+    uid_b: str,
+    weights: dict[str, float],
+    artifacts: dict,
+) -> dict[str, float]:
+    """Compute all applicable signal scores for a unit pair."""
+    signals: dict[str, float] = {}
+    for sig_name in weights:
+        func = _SIGNAL_FUNCS.get(sig_name)
+        if func:
+            signals[sig_name] = func(uid_a, uid_b, artifacts)
+    return signals
+
+
 def compute_scores(output_dir: Path, threshold: float = 0.35) -> None:
-    """Compute pairwise similarity scores and write similarity-matrix.json.
+    """Compute pairwise similarity scores and write similarity-matrix.json."""
+    artifacts = _load_scoring_artifacts(output_dir)
+    units = artifacts["units"]
 
-    Loads all Stage 2 artifacts, computes adaptive-weighted similarity for
-    all viable pairs, and emits pairs above *threshold*.
-    """
-    units = read_code_units(output_dir)
-    fps = read_artifact("structural-fingerprints.json", output_dir)
-    typesigs = read_artifact("type-signatures.json", output_dir)
-    cg = read_artifact("call-graph.json", output_dir)
-    dc = read_artifact("dependency-context.json", output_dir)
+    units_by_id: dict[str, dict] = {u["id"]: u for u in units if u.get("id")}
+    artifacts["units_by_id"] = units_by_id
 
-    # Optional artifacts
-    embeddings: dict[str, list[float]] = {}
-    try:
-        embeddings = read_artifact("semantic-embeddings.json", output_dir)
-    except FileNotFoundError:
-        pass
+    has_embeddings = bool(artifacts["embeddings"])
+    has_structural_patterns = bool(artifacts["structural_patterns"])
 
-    structural_patterns: dict[str, list[str]] = {}
-    try:
-        structural_patterns = read_artifact("structural-patterns.json", output_dir)
-    except FileNotFoundError:
-        pass
-
-    has_embeddings = bool(embeddings)
-    has_structural_patterns = bool(structural_patterns)
-
-    # Build lookup by id
-    units_by_id: dict[str, dict] = {}
-    for u in units:
-        uid = u.get("id", "")
-        if uid:
-            units_by_id[uid] = u
-
-    # Filter: skip structural-only kinds
     candidate_ids = [uid for uid, u in units_by_id.items() if u.get("kind", "") not in _SKIP_KINDS]
-
-    # Build file path lookup for same-file filtering
-    file_of: dict[str, str] = {}
-    for uid in candidate_ids:
-        file_of[uid] = units_by_id[uid].get("filePath", "")
+    file_of = {uid: units_by_id[uid].get("filePath", "") for uid in candidate_ids}
 
     total_pairs = 0
     scored_pairs: list[dict] = []
-
     n = len(candidate_ids)
     print(f"  Scoring {n} units ({n * (n - 1) // 2} potential pairs)...", file=sys.stderr)
 
@@ -367,71 +385,17 @@ def compute_scores(output_dir: Path, threshold: float = 0.35) -> None:
             uid_b = candidate_ids[j]
             kind_b = units_by_id[uid_b].get("kind", "")
 
-            # Skip same-file pairs
-            file_b = file_of[uid_b]
-            if file_a and file_b and file_a == file_b:
+            if file_a and file_of[uid_b] and file_a == file_of[uid_b]:
                 continue
-
-            # Skip incompatible kinds
             if not _is_comparable(kind_a, kind_b):
                 continue
 
             total_pairs += 1
-
-            # Get adapted weights
             weights = _get_weights(has_embeddings, has_structural_patterns, kind_a, kind_b)
+            signals = _score_pair(uid_a, uid_b, weights, artifacts)
 
-            # Compute signals
-            signals: dict[str, float] = {}
-
-            if "semantic" in weights:
-                signals["semantic"] = sig_semantic(uid_a, uid_b, embeddings)
-
-            if "typeSignature" in weights:
-                signals["typeSignature"] = sig_type_signature(uid_a, uid_b, typesigs)
-
-            if "jsxStructure" in weights:
-                signals["jsxStructure"] = sig_jsx_structure(uid_a, uid_b, fps, units_by_id)
-
-            if "hookProfile" in weights:
-                signals["hookProfile"] = sig_hook_profile(uid_a, uid_b, fps)
-
-            if "imports" in weights:
-                signals["imports"] = sig_imports(uid_a, uid_b, fps)
-
-            if "dataAccess" in weights:
-                signals["dataAccess"] = sig_data_access(uid_a, uid_b, fps)
-
-            if "behavior" in weights:
-                signals["behavior"] = sig_behavior(uid_a, uid_b, fps)
-
-            if "calleeSet" in weights:
-                signals["calleeSet"] = sig_callee_set(uid_a, uid_b, cg)
-
-            if "callSequence" in weights:
-                signals["callSequence"] = sig_call_sequence(uid_a, uid_b, cg)
-
-            if "consumerSet" in weights:
-                signals["consumerSet"] = sig_consumer_set(uid_a, uid_b, units_by_id)
-
-            if "coOccurrence" in weights:
-                signals["coOccurrence"] = sig_cooccurrence(uid_a, uid_b, dc)
-
-            if "neighborhood" in weights:
-                signals["neighborhood"] = sig_neighborhood(uid_a, uid_b, dc)
-
-            if "structuralPattern" in weights:
-                signals["structuralPattern"] = sig_structural_pattern(
-                    uid_a, uid_b, structural_patterns
-                )
-
-            # Weighted sum
-            score = sum(
-                weights.get(sig_name, 0.0) * sig_val for sig_name, sig_val in signals.items()
-            )
-
+            score = sum(weights.get(s, 0.0) * v for s, v in signals.items())
             if score >= threshold:
-                # Find dominant signal
                 dominant = max(signals, key=lambda s: signals[s]) if signals else ""
                 scored_pairs.append(
                     {
@@ -443,12 +407,9 @@ def compute_scores(output_dir: Path, threshold: float = 0.35) -> None:
                     }
                 )
 
-    # Sort by score descending
     scored_pairs.sort(key=lambda p: p["score"], reverse=True)
-
     print(
         f"  Compared {total_pairs} pairs, {len(scored_pairs)} above threshold {threshold}.",
         file=sys.stderr,
     )
-
     write_artifact("similarity-matrix.json", scored_pairs, output_dir)

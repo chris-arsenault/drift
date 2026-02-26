@@ -173,6 +173,7 @@ function resolvePropertyAccessChain(expr: Node): string {
 /**
  * Classify the context of a call expression within its containing function body.
  */
+// eslint-disable-next-line sonarjs/cognitive-complexity -- walks AST parent chain classifying nested callback contexts
 function classifyCallContext(callExpr: Node, outerBody: Node): CallContext {
   let current = callExpr.getParent();
 

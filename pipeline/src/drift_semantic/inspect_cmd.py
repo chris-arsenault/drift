@@ -17,6 +17,73 @@ def _load_optional(name: str, output_dir: Path) -> dict | list | None:
         return None
 
 
+def _print_fingerprint(unit_id: str, output_dir: Path) -> None:
+    fingerprints = _load_optional("structural-fingerprints.json", output_dir)
+    if not isinstance(fingerprints, dict) or unit_id not in fingerprints:
+        return
+    fp = fingerprints[unit_id]
+    print("Structural Fingerprint:")
+    print(f"  JSX hash (exact): {fp.get('jsxHash', {}).get('exact', 'n/a')}")
+    print(f"  JSX hash (fuzzy): {fp.get('jsxHash', {}).get('fuzzy', 'n/a')}")
+    print(f"  Hook profile:     {fp.get('hookProfile', [])}")
+    print(f"  Behavior flags:   {fp.get('behaviorFlags', [])}")
+    imports = fp.get("importConstellation", {})
+    if imports:
+        top = sorted(imports.items(), key=lambda x: x[1], reverse=True)[:5]
+        print(f"  Top imports:      {', '.join(k for k, _ in top)}")
+    print()
+
+
+def _print_typesig(unit_id: str, output_dir: Path) -> None:
+    typesigs = _load_optional("type-signatures.json", output_dir)
+    if not isinstance(typesigs, dict) or unit_id not in typesigs:
+        return
+    sig = typesigs[unit_id]
+    print("Type Signature:")
+    print(f"  Canonical:    {sig.get('canonical', '?')}")
+    print(f"  Arity:        {sig.get('arity', '?')}")
+    print(f"  Strict hash:  {sig.get('strict_hash', 'n/a')}")
+    print(f"  Loose hash:   {sig.get('loose_hash', 'n/a')}")
+    print()
+
+
+def _print_callgraph(unit_id: str, output_dir: Path) -> None:
+    callgraph = _load_optional("call-graph.json", output_dir)
+    if not isinstance(callgraph, dict) or unit_id not in callgraph:
+        return
+    cg = callgraph[unit_id]
+    print("Call Graph:")
+    print(f"  Depth profile:    {cg.get('depthProfile', [])}")
+    print(f"  Callee set size:  {len(cg.get('calleeSetVector', {}))}")
+    seq_hashes = cg.get("sequenceHashes", {})
+    if seq_hashes:
+        print(f"  Sequence hashes:  {', '.join(seq_hashes.keys())}")
+    chain_hashes = cg.get("chainPatternHashes", [])
+    if chain_hashes:
+        print(f"  Chain patterns:   {len(chain_hashes)}")
+    print()
+
+
+def _print_depcontext(unit_id: str, output_dir: Path) -> None:
+    depctx = _load_optional("dependency-context.json", output_dir)
+    if not isinstance(depctx, dict) or unit_id not in depctx:
+        return
+    dc = depctx[unit_id]
+    print("Dependency Context:")
+    profile = dc.get("consumerProfile", [])
+    if len(profile) >= 3:  # noqa: PLR2004
+        print(f"  Consumer count (norm): {profile[0]:.3f}")
+        print(f"  Kind entropy:          {profile[1]:.3f}")
+        print(f"  Directory spread:      {profile[2]:.3f}")
+    co_vec = dc.get("cooccurrenceVector", {})
+    if co_vec:
+        top_co = sorted(co_vec.items(), key=lambda x: x[1], reverse=True)[:5]
+        print(f"  Top co-occurrences:    {', '.join(f'{k}({v:.2f})' for k, v in top_co)}")
+    print(f"  Neighborhood r1:       {dc.get('neighborhoodHash_r1', 'n/a')[:16]}...")
+    print(f"  Neighborhood r2:       {dc.get('neighborhoodHash_r2', 'n/a')[:16]}...")
+    print()
+
+
 def inspect_unit(unit_id: str, output_dir: Path) -> None:
     """Show all data for a single unit across every artifact."""
     units = read_code_units(output_dir)
@@ -35,61 +102,10 @@ def inspect_unit(unit_id: str, output_dir: Path) -> None:
     print(f"  Consumers:{len(unit.get('consumers', []))}")
     print()
 
-    fingerprints = _load_optional("structural-fingerprints.json", output_dir)
-    if isinstance(fingerprints, dict) and unit_id in fingerprints:
-        fp = fingerprints[unit_id]
-        print("Structural Fingerprint:")
-        print(f"  JSX hash (exact): {fp.get('jsxHash', {}).get('exact', 'n/a')}")
-        print(f"  JSX hash (fuzzy): {fp.get('jsxHash', {}).get('fuzzy', 'n/a')}")
-        print(f"  Hook profile:     {fp.get('hookProfile', [])}")
-        print(f"  Behavior flags:   {fp.get('behaviorFlags', [])}")
-        imports = fp.get("importConstellation", {})
-        if imports:
-            top = sorted(imports.items(), key=lambda x: x[1], reverse=True)[:5]
-            print(f"  Top imports:      {', '.join(k for k, _ in top)}")
-        print()
-
-    typesigs = _load_optional("type-signatures.json", output_dir)
-    if isinstance(typesigs, dict) and unit_id in typesigs:
-        sig = typesigs[unit_id]
-        print("Type Signature:")
-        print(f"  Canonical:    {sig.get('canonical', '?')}")
-        print(f"  Arity:        {sig.get('arity', '?')}")
-        print(f"  Strict hash:  {sig.get('strict_hash', 'n/a')}")
-        print(f"  Loose hash:   {sig.get('loose_hash', 'n/a')}")
-        print()
-
-    callgraph = _load_optional("call-graph.json", output_dir)
-    if isinstance(callgraph, dict) and unit_id in callgraph:
-        cg = callgraph[unit_id]
-        vec = cg.get("calleeSetVector", {})
-        print("Call Graph:")
-        print(f"  Depth profile:    {cg.get('depthProfile', [])}")
-        print(f"  Callee set size:  {len(vec)}")
-        seq_hashes = cg.get("sequenceHashes", {})
-        if seq_hashes:
-            print(f"  Sequence hashes:  {', '.join(seq_hashes.keys())}")
-        chain_hashes = cg.get("chainPatternHashes", [])
-        if chain_hashes:
-            print(f"  Chain patterns:   {len(chain_hashes)}")
-        print()
-
-    depctx = _load_optional("dependency-context.json", output_dir)
-    if isinstance(depctx, dict) and unit_id in depctx:
-        dc = depctx[unit_id]
-        print("Dependency Context:")
-        profile = dc.get("consumerProfile", [])
-        if len(profile) >= 3:
-            print(f"  Consumer count (norm): {profile[0]:.3f}")
-            print(f"  Kind entropy:          {profile[1]:.3f}")
-            print(f"  Directory spread:      {profile[2]:.3f}")
-        co_vec = dc.get("cooccurrenceVector", {})
-        if co_vec:
-            top_co = sorted(co_vec.items(), key=lambda x: x[1], reverse=True)[:5]
-            print(f"  Top co-occurrences:    {', '.join(f'{k}({v:.2f})' for k, v in top_co)}")
-        print(f"  Neighborhood r1:       {dc.get('neighborhoodHash_r1', 'n/a')[:16]}...")
-        print(f"  Neighborhood r2:       {dc.get('neighborhoodHash_r2', 'n/a')[:16]}...")
-        print()
+    _print_fingerprint(unit_id, output_dir)
+    _print_typesig(unit_id, output_dir)
+    _print_callgraph(unit_id, output_dir)
+    _print_depcontext(unit_id, output_dir)
 
 
 def inspect_similar(unit_id: str, top: int, output_dir: Path) -> None:
@@ -134,7 +150,7 @@ def inspect_similar(unit_id: str, top: int, output_dir: Path) -> None:
         name = u.get("name", m["unit"])
         kind = u.get("kind", "?")
         fp = u.get("filePath", "?")
-        if len(fp) > 35:
+        if len(fp) > 35:  # noqa: PLR2004
             fp = "..." + fp[-32:]
         print(f"{m['score']:<8.4f} {m['dominantSignal']:<18} {name:<28} {kind:<12} {fp}")
         top_sigs = sorted(m["signals"].items(), key=lambda x: x[1], reverse=True)[:3]
@@ -142,69 +158,72 @@ def inspect_similar(unit_id: str, top: int, output_dir: Path) -> None:
         print(f"         {sig_str}")
 
 
+def _print_cluster_finding(cluster_id: str, output_dir: Path) -> None:
+    """Print finding details for a cluster if available."""
+    findings_data = _load_optional("findings.json", output_dir)
+    if not isinstance(findings_data, list):
+        return
+    for finding in findings_data:
+        if finding.get("clusterId") == cluster_id:
+            print()
+            print("Finding:")
+            print(f"  Verdict:        {finding.get('verdict', '?')}")
+            print(f"  Confidence:     {finding.get('confidence', '?')}")
+            role = finding.get("roleDescription", "")
+            if role:
+                print(f"  Role:           {role}")
+            assessment = finding.get("consolidationAssessment", "")
+            if assessment:
+                print(f"  Consolidation:  {assessment}")
+            break
+
+
 def inspect_cluster(cluster_id: str, output_dir: Path) -> None:
     """Show cluster details including members, signals, and findings."""
     clusters = read_artifact("clusters.json", output_dir)
-    for cluster in clusters:
-        if cluster.get("id") == cluster_id:
-            units = read_code_units(output_dir)
-            units_by_id = {u["id"]: u for u in units if "id" in u}
+    cluster = next((c for c in clusters if c.get("id") == cluster_id), None)
+    if not cluster:
+        print(f"Cluster not found: {cluster_id}")
+        return
 
-            print(f"Cluster: {cluster_id}")
-            print(f"Members:          {cluster.get('memberCount', 0)}")
-            print(f"Avg Similarity:   {cluster.get('avgSimilarity', 0):.4f}")
-            print(f"Rank Score:       {cluster.get('rankScore', 0):.4f}")
-            print(f"Directory Spread: {cluster.get('directorySpread', 0)}")
-            print(f"Kind Mix:         {json.dumps(cluster.get('kindMix', {}))}")
-            print(f"Consumer Overlap: {cluster.get('consumerOverlap', 0):.4f}")
-            print()
+    units = read_code_units(output_dir)
+    units_by_id = {u["id"]: u for u in units if "id" in u}
 
-            shared = cluster.get("sharedCallees", [])
-            if shared:
-                print(f"Shared Callees: {', '.join(shared)}")
-                print()
+    print(f"Cluster: {cluster_id}")
+    print(f"Members:          {cluster.get('memberCount', 0)}")
+    print(f"Avg Similarity:   {cluster.get('avgSimilarity', 0):.4f}")
+    print(f"Rank Score:       {cluster.get('rankScore', 0):.4f}")
+    print(f"Directory Spread: {cluster.get('directorySpread', 0)}")
+    print(f"Kind Mix:         {json.dumps(cluster.get('kindMix', {}))}")
+    print(f"Consumer Overlap: {cluster.get('consumerOverlap', 0):.4f}")
+    print()
 
-            print("Signal Breakdown:")
-            for sig, val in sorted(
-                cluster.get("signalBreakdown", {}).items(),
-                key=lambda x: x[1],
-                reverse=True,
-            ):
-                bar = "#" * int(val * 40)
-                print(f"  {sig:<20} {val:.4f} {bar}")
-            print()
+    shared = cluster.get("sharedCallees", [])
+    if shared:
+        print(f"Shared Callees: {', '.join(shared)}")
+        print()
 
-            print("Members:")
-            print(f"  {'Name':<30} {'Kind':<12} {'File'}")
-            print("  " + "-" * 70)
-            for uid in cluster.get("members", []):
-                u = units_by_id.get(uid, {})
-                name = u.get("name", uid)
-                kind = u.get("kind", "?")
-                fp = u.get("filePath", "?")
-                if len(fp) > 45:
-                    fp = "..." + fp[-42:]
-                print(f"  {name:<30} {kind:<12} {fp}")
+    print("Signal Breakdown:")
+    for sig, val in sorted(
+        cluster.get("signalBreakdown", {}).items(), key=lambda x: x[1], reverse=True
+    ):
+        bar = "#" * int(val * 40)
+        print(f"  {sig:<20} {val:.4f} {bar}")
+    print()
 
-            # Show findings if available
-            findings_data = _load_optional("findings.json", output_dir)
-            if isinstance(findings_data, list):
-                for finding in findings_data:
-                    if finding.get("clusterId") == cluster_id:
-                        print()
-                        print("Finding:")
-                        print(f"  Verdict:        {finding.get('verdict', '?')}")
-                        print(f"  Confidence:     {finding.get('confidence', '?')}")
-                        role = finding.get("roleDescription", "")
-                        if role:
-                            print(f"  Role:           {role}")
-                        assessment = finding.get("consolidationAssessment", "")
-                        if assessment:
-                            print(f"  Consolidation:  {assessment}")
-                        break
-            return
+    print("Members:")
+    print(f"  {'Name':<30} {'Kind':<12} {'File'}")
+    print("  " + "-" * 70)
+    for uid in cluster.get("members", []):
+        u = units_by_id.get(uid, {})
+        name = u.get("name", uid)
+        kind = u.get("kind", "?")
+        fp = u.get("filePath", "?")
+        if len(fp) > 45:  # noqa: PLR2004
+            fp = "..." + fp[-42:]
+        print(f"  {name:<30} {kind:<12} {fp}")
 
-    print(f"Cluster not found: {cluster_id}")
+    _print_cluster_finding(cluster_id, output_dir)
 
 
 def inspect_consumers(unit_id: str, output_dir: Path) -> None:
@@ -237,7 +256,7 @@ def inspect_consumers(unit_id: str, output_dir: Path) -> None:
             name = cu.get("name", cid)
             kind = cu.get("kind", "?")
             fp = cu.get("filePath", "?")
-        if len(fp) > 40:
+        if len(fp) > 40:  # noqa: PLR2004
             fp = "..." + fp[-37:]
         print(f"  {name:<30} {kind:<12} {fp}")
 
@@ -276,6 +295,6 @@ def inspect_callers(unit_id: str, output_dir: Path) -> None:
         tu = units_by_id.get(target, {})
         name = tu.get("name", target)
         fp = tu.get("filePath", "?")
-        if len(fp) > 35:
+        if len(fp) > 35:  # noqa: PLR2004
             fp = "..." + fp[-32:]
         print(f"  {name:<35} {context:<12} {fp}")

@@ -9,7 +9,7 @@ import json
 import math
 from pathlib import Path
 
-from .io_utils import read_code_units, write_artifact
+from .io_utils import read_code_units, resolve_consumer_id, write_artifact
 from .vectors import SparseVector
 
 
@@ -63,10 +63,7 @@ def consumer_profile(unit: dict) -> list[float]:
         # Extract directories from consumer paths if available
         dirs: set[str] = set()
         for c in consumers:
-            if isinstance(c, dict):
-                fp = c.get("filePath", c.get("file", ""))
-            else:
-                fp = str(c)
+            fp = c.get("filePath", c.get("file", "")) if isinstance(c, dict) else str(c)
             if "/" in fp:
                 dirs.add(fp.rsplit("/", 1)[0])
         distinct_dirs = len(dirs)
@@ -111,10 +108,7 @@ def _build_consumer_graph(units: list[dict]) -> dict[str, set[str]]:
         consumers = unit.get("consumers", [])
         consumer_ids: set[str] = set()
         for c in consumers:
-            if isinstance(c, dict):
-                cid = c.get("id", c.get("unitId", ""))
-            else:
-                cid = str(c)
+            cid = resolve_consumer_id(c)
             if cid:
                 consumer_ids.add(cid)
         graph[uid] = consumer_ids

@@ -12,6 +12,8 @@ from pathlib import Path
 from .io_utils import read_code_units, write_artifact
 from .vectors import SparseVector
 
+MIN_DEPTH_KEY = 3
+
 
 def _sha256(obj: object) -> str:
     raw = json.dumps(obj, sort_keys=True)
@@ -83,8 +85,8 @@ def depth_profile(unit: dict) -> list[int]:
             if isinstance(v, (int, float))
             and str(k) not in ("1", "2")
             and (
-                (isinstance(k, int) and k >= 3)
-                or (isinstance(k, str) and k.isdigit() and int(k) >= 3)
+                (isinstance(k, int) and k >= MIN_DEPTH_KEY)
+                or (isinstance(k, str) and k.isdigit() and int(k) >= MIN_DEPTH_KEY)
             )
         )
         return [int(direct), int(depth2), int(depth3plus)]

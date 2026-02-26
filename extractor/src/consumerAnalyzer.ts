@@ -11,83 +11,86 @@ import type { CodeUnit } from "./types.js";
  *
  * Mutates units in place.
  */
+/**
+ * Link consumers by resolving internal imports to target units.
+ * For each unit's internal import, adds the importing unit as a consumer
+ * of the resolved target unit.
+ */
+// eslint-disable-next-line sonarjs/cognitive-complexity -- resolves imports across specifier patterns and file candidates
+function linkConsumers(
+  units: CodeUnit[],
+  unitById: Map<string, CodeUnit>,
+  unitsByFile: Map<string, string[]>
+): void {
+  for (const unit of units) {
+    for (const imp of unit.imports) {
+      if (imp.category !== "internal") continue;
+
+      const resolvedTargets = resolveImportToFile(unit.filePath, imp.source, unitsByFile);
+
+      for (const targetUnitId of resolvedTargets) {
+        const targetUnit = unitById.get(targetUnitId);
+        if (!targetUnit || targetUnit.id === unit.id) continue;
+
+        const targetName = targetUnit.name;
+        const specifierMatch =
+          imp.specifiers.length === 0 ||
+          imp.specifiers.some((spec) => {
+            const baseName = spec.includes(" as ") ? spec.split(" as ")[0].trim() : spec;
+            return baseName === targetName || baseName === "default" || spec.startsWith("* as");
+          });
+
+        if (specifierMatch && !targetUnit.consumers.includes(unit.id)) {
+          targetUnit.consumers.push(unit.id);
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Compute consumer metadata: count, kinds, and directory spread.
+ */
+function computeConsumerMetadata(units: CodeUnit[], unitById: Map<string, CodeUnit>): void {
+  for (const unit of units) {
+    unit.consumerCount = unit.consumers.length;
+
+    const kindSet = new Set<string>();
+    const dirSet = new Set<string>();
+
+    for (const consumerId of unit.consumers) {
+      const consumer = unitById.get(consumerId);
+      if (!consumer) continue;
+
+      kindSet.add(consumer.kind);
+
+      const parts = consumer.filePath.split("/");
+      if (parts.length >= 2) {
+        dirSet.add(parts.slice(0, 2).join("/"));
+      } else {
+        dirSet.add(parts[0]);
+      }
+    }
+
+    unit.consumerKinds = [...kindSet].sort();
+    unit.consumerDirectories = [...dirSet].sort();
+  }
+}
+
 export function buildConsumerGraph(units: CodeUnit[]): void {
-  // Build lookup maps
   const unitById = new Map<string, CodeUnit>();
-  const unitsByFile = new Map<string, string[]>(); // filePath → list of unit IDs
+  const unitsByFile = new Map<string, string[]>();
 
   for (const unit of units) {
     unitById.set(unit.id, unit);
-
     if (!unitsByFile.has(unit.filePath)) {
       unitsByFile.set(unit.filePath, []);
     }
     unitsByFile.get(unit.filePath)!.push(unit.id);
   }
 
-  // First pass: build consumer lists
-  // For each unit, look at its internal imports and link to target units
-  for (const unit of units) {
-    for (const imp of unit.imports) {
-      if (imp.category !== "internal") continue;
-
-      // Resolve the import source relative to the unit's file
-      const resolvedTargets = resolveImportToFile(unit.filePath, imp.source, unitsByFile);
-
-      for (const targetUnitId of resolvedTargets) {
-        const targetUnit = unitById.get(targetUnitId);
-        if (!targetUnit) continue;
-        if (targetUnit.id === unit.id) continue; // Don't self-reference
-
-        // Check if any of the imported specifiers match the target unit name
-        const targetName = targetUnit.name;
-        const specifierMatch =
-          imp.specifiers.length === 0 || // default import or namespace
-          imp.specifiers.some((spec) => {
-            // Handle "Name as Alias" patterns
-            const baseName = spec.includes(" as ") ? spec.split(" as ")[0].trim() : spec;
-            return baseName === targetName || baseName === "default" || spec.startsWith("* as");
-          });
-
-        if (specifierMatch) {
-          if (!targetUnit.consumers.includes(unit.id)) {
-            targetUnit.consumers.push(unit.id);
-          }
-        }
-      }
-    }
-  }
-
-  // Second pass: compute consumer metadata
-  for (const unit of units) {
-    unit.consumerCount = unit.consumers.length;
-
-    // Consumer kinds: set of kinds that consume this unit
-    const kindSet = new Set<string>();
-    for (const consumerId of unit.consumers) {
-      const consumer = unitById.get(consumerId);
-      if (consumer) kindSet.add(consumer.kind);
-    }
-    unit.consumerKinds = [...kindSet].sort();
-
-    // Consumer directories: set of directory prefixes
-    const dirSet = new Set<string>();
-    for (const consumerId of unit.consumers) {
-      const consumer = unitById.get(consumerId);
-      if (consumer) {
-        // Use the first two path segments as directory prefix
-        const parts = consumer.filePath.split("/");
-        if (parts.length >= 2) {
-          dirSet.add(parts.slice(0, 2).join("/"));
-        } else {
-          dirSet.add(parts[0]);
-        }
-      }
-    }
-    unit.consumerDirectories = [...dirSet].sort();
-  }
-
-  // Third pass: build co-occurrence data
+  linkConsumers(units, unitById, unitsByFile);
+  computeConsumerMetadata(units, unitById);
   buildCoOccurrences(units, unitById, unitsByFile);
 }
 
@@ -144,6 +147,7 @@ function resolveImportToFile(
  * into that file. For each pair in that set, increment a co-occurrence counter.
  * Then for each unit, record the top co-occurring units.
  */
+// eslint-disable-next-line sonarjs/cognitive-complexity -- multi-pass co-occurrence computation with nested pair counting
 function buildCoOccurrences(
   units: CodeUnit[],
   unitById: Map<string, CodeUnit>,

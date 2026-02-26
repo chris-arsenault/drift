@@ -42,16 +42,11 @@ export default tseslint.config(
     },
   },
 
-  // SonarJS — with overrides for AST processing code
+  // SonarJS
   {
     ...sonarjs.configs.recommended,
     rules: {
       ...sonarjs.configs.recommended.rules,
-      // AST walkers are inherently complex — these functions process deeply nested trees
-      "sonarjs/cognitive-complexity": ["warn", 30],
-      // Regex patterns are used on identifiers, not user input
-      "sonarjs/slow-regex": "off",
-      // Duplicate branches happen in type-narrowing patterns
       "sonarjs/no-duplicated-branches": "warn",
     },
   },

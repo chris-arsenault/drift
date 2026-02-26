@@ -50,6 +50,7 @@ function tsconfigCovers(tsconfigPath: string, targetDir: string): boolean {
 
     for (const pattern of includes) {
       // Resolve the include pattern base relative to tsconfig dir
+      // eslint-disable-next-line sonarjs/slow-regex -- operates on short tsconfig include patterns, no ReDoS risk
       const patternBase = pattern.replace(/\/\*.*$/, "").replace(/\*.*$/, "");
       const resolved = path.resolve(tsconfigDir, patternBase);
       // If the resolved base IS or is a parent of targetDir, it covers it
@@ -100,6 +101,7 @@ function findUncoveredWebuis(projectRoot: string, tsconfigPaths: string[]): stri
  *   with allowJs + JSX support
  * - Returns projects and a set of seen absolute file paths for deduplication
  */
+// eslint-disable-next-line sonarjs/cognitive-complexity -- sequential project loading with tsconfig resolution and fallback
 export function loadProjects(projectRoot: string): LoadedProjects {
   const tsconfigPaths = findTsconfigFiles(projectRoot);
   const seenFiles = new Set<string>();

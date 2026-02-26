@@ -31,7 +31,7 @@ def normalized_hamming(a: list[int], b: list[int]) -> float:
             if a[i] != b[i]:
                 mismatches += 1
         return 1.0 - (mismatches / max_len)
-    distance = sum(1 for x, y in zip(a, b) if x != y)
+    distance = sum(1 for x, y in zip(a, b, strict=False) if x != y)
     return 1.0 - (distance / len(a))
 
 
@@ -88,7 +88,7 @@ def _count_matching_nodes(tree_a: dict | None, tree_b: dict | None) -> int:
     children_b = [c for c in tree_b.get("children", []) if isinstance(c, dict)]
 
     # Greedy ordered matching: pair children by index
-    for ca, cb in zip(children_a, children_b):
+    for ca, cb in zip(children_a, children_b, strict=False):
         matching += _count_matching_nodes(ca, cb)
 
     return matching

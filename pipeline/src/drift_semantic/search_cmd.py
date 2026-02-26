@@ -5,7 +5,7 @@ All output goes to stdout as formatted text.
 
 from pathlib import Path
 
-from .io_utils import read_artifact, read_code_units
+from .io_utils import read_artifact, read_code_units, resolve_consumer_id
 
 
 def search_calls(unit_id: str, output_dir: Path) -> None:
@@ -48,9 +48,19 @@ def search_calls(unit_id: str, output_dir: Path) -> None:
         name = u.get("name", uid)
         kind = u.get("kind", "?")
         fp = u.get("filePath", "?")
-        if len(fp) > 30:
+        if len(fp) > 30:  # noqa: PLR2004
             fp = "..." + fp[-27:]
         print(f"  {shared:<8} {total:<8} {name:<28} {kind:<12} {fp}")
+
+
+def _extract_consumer_id_set(unit: dict) -> set[str]:
+    """Extract consumer IDs from a unit's consumers list."""
+    ids: set[str] = set()
+    for c in unit.get("consumers", []):
+        cid = resolve_consumer_id(c)
+        if cid:
+            ids.add(cid)
+    return ids
 
 
 def search_called_by(unit_id: str, output_dir: Path) -> None:
@@ -62,18 +72,7 @@ def search_called_by(unit_id: str, output_dir: Path) -> None:
         print(f"Unit not found: {unit_id}")
         return
 
-    def _extract_consumer_ids(consumers: list) -> set[str]:
-        ids: set[str] = set()
-        for c in consumers:
-            if isinstance(c, dict):
-                cid = c.get("id", c.get("unitId", ""))
-            else:
-                cid = str(c)
-            if cid:
-                ids.add(cid)
-        return ids
-
-    target_consumers = _extract_consumer_ids(unit.get("consumers", []))
+    target_consumers = _extract_consumer_id_set(unit)
     if not target_consumers:
         print(f"No consumers found for: {unit_id}")
         return
@@ -83,7 +82,7 @@ def search_called_by(unit_id: str, output_dir: Path) -> None:
         uid = u.get("id", "")
         if not uid or uid == unit_id:
             continue
-        other_consumers = _extract_consumer_ids(u.get("consumers", []))
+        other_consumers = _extract_consumer_id_set(u)
         shared = len(target_consumers & other_consumers)
         if shared > 0:
             overlaps.append((uid, shared, len(other_consumers)))
@@ -103,7 +102,7 @@ def search_called_by(unit_id: str, output_dir: Path) -> None:
         name = u.get("name", uid)
         kind = u.get("kind", "?")
         fp = u.get("filePath", "?")
-        if len(fp) > 30:
+        if len(fp) > 30:  # noqa: PLR2004
             fp = "..." + fp[-27:]
         print(f"  {shared:<8} {total:<8} {name:<28} {kind:<12} {fp}")
 
@@ -135,7 +134,7 @@ def search_co_occurs(unit_id: str, output_dir: Path) -> None:
         name = u.get("name", uid)
         kind = u.get("kind", "?")
         fp = u.get("filePath", "?")
-        if len(fp) > 30:
+        if len(fp) > 30:  # noqa: PLR2004
             fp = "..." + fp[-27:]
         print(f"  {weight:<8.4f} {name:<28} {kind:<12} {fp}")
 
@@ -177,6 +176,6 @@ def search_type_like(unit_id: str, output_dir: Path) -> None:
         name = u.get("name", uid)
         kind = u.get("kind", "?")
         fp = u.get("filePath", "?")
-        if len(fp) > 28:
+        if len(fp) > 28:  # noqa: PLR2004
             fp = "..." + fp[-25:]
         print(f"  {match_type:<8} {name:<28} {kind:<12} {fp:<30} {can}")

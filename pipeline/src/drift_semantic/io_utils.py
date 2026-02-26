@@ -64,6 +64,17 @@ def write_artifact(name: str, data: Any, output_dir: Path) -> Path:
     return path
 
 
+def resolve_consumer_id(consumer: object) -> str:
+    """Extract a consumer unit ID from a dict or string.
+
+    Consumer entries in code-units.json may be plain strings (unit IDs)
+    or dicts with 'id' or 'unitId' keys.
+    """
+    if isinstance(consumer, dict):
+        return consumer.get("id", consumer.get("unitId", ""))
+    return str(consumer)
+
+
 def read_code_units(output_dir: Path) -> list[dict]:
     """Read code-units.json and return the units array.
 

@@ -10,31 +10,14 @@ from pathlib import Path
 
 from .io_utils import read_artifact, write_artifact
 
+try:
+    import httpx
+except ImportError:
+    httpx = None  # type: ignore[assignment]
 
-def embed_purposes(
-    output_dir: Path,
-    ollama_url: str,
-    model: str = "nomic-embed-text",
-) -> None:
-    """Embed purpose statements via Ollama API.
 
-    Reads purpose-statements.json from *output_dir*, calls Ollama for each
-    statement, and writes semantic-embeddings.json.
-
-    Exits with an error message if httpx is not installed or Ollama is
-    unreachable.
-    """
-    try:
-        import httpx
-    except ImportError:
-        print(
-            "Error: httpx is required for embedding. "
-            "Install with: pip install drift-semantic[ollama]",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    # Read purpose statements
+def _load_purposes(output_dir: Path) -> list:
+    """Load and validate purpose-statements.json."""
     purposes_path = output_dir / "purpose-statements.json"
     if not purposes_path.exists():
         print(
@@ -46,32 +29,43 @@ def embed_purposes(
 
     purposes = read_artifact("purpose-statements.json", output_dir)
     if not isinstance(purposes, list):
+        print("Error: purpose-statements.json must be a JSON array.", file=sys.stderr)
+        sys.exit(1)
+    return purposes
+
+
+def _connect_ollama(ollama_url: str):
+    """Connect to Ollama and return (client, base_url). Exits on failure."""
+    if httpx is None:
         print(
-            "Error: purpose-statements.json must be a JSON array.",
+            "Error: httpx is required for embedding. "
+            "Install with: pip install drift-semantic[ollama]",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    # Normalize URL
     url = ollama_url.rstrip("/")
-    embed_url = f"{url}/api/embeddings"
-
-    # Test connectivity
     try:
         client = httpx.Client(timeout=30.0)
         client.get(f"{url}/api/tags")
     except httpx.ConnectError:
-        print(
-            f"Error: Cannot connect to Ollama at {url}. Is the Ollama server running?",
-            file=sys.stderr,
-        )
+        print(f"Error: Cannot connect to Ollama at {url}.", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
-        print(
-            f"Error connecting to Ollama at {url}: {e}",
-            file=sys.stderr,
-        )
+        print(f"Error connecting to Ollama at {url}: {e}", file=sys.stderr)
         sys.exit(1)
+    return client, url
+
+
+def embed_purposes(
+    output_dir: Path,
+    ollama_url: str,
+    model: str = "nomic-embed-text",
+) -> None:
+    """Embed purpose statements via Ollama API."""
+    purposes = _load_purposes(output_dir)
+    client, url = _connect_ollama(ollama_url)
+    embed_url = f"{url}/api/embeddings"
 
     embeddings: dict[str, list[float]] = {}
     total = len(purposes)

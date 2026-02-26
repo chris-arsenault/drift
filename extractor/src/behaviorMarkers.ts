@@ -28,7 +28,8 @@ export function analyzeBehavior(node: Node): BehaviorMarkers {
     }
   }
 
-  // Walk the full subtree once and check patterns
+  // Walk the full subtree once and check patterns — single-pass visitor checks many independent conditions
+  // eslint-disable-next-line sonarjs/cognitive-complexity
   node.forEachDescendant((desc) => {
     const kindNum = desc.getKind();
 
@@ -120,7 +121,10 @@ export function analyzeBehavior(node: Node): BehaviorMarkers {
           markers.rendersConditional = true;
         }
         // Also handle nested ternaries/&& in the text
-        if (!markers.rendersConditional && (/&&/.test(exprText) || /\?.*:/.test(exprText))) {
+        if (
+          !markers.rendersConditional &&
+          (exprText.includes("&&") || (exprText.includes("?") && exprText.includes(":")))
+        ) {
           markers.rendersConditional = true;
         }
       }

@@ -9,7 +9,10 @@ from pathlib import Path
 
 import networkx as nx
 
-from .io_utils import read_artifact, read_code_units, write_artifact
+from .io_utils import read_artifact, read_code_units, resolve_consumer_id, write_artifact
+
+SUBCLUSTER_THRESHOLD = 5
+MIN_COMMUNITY_SIZE = 2
 
 
 def _build_graph(scored_pairs: list[dict], threshold: float) -> nx.Graph:
@@ -36,7 +39,7 @@ def detect_communities(G: nx.Graph) -> list[set[str]]:
     communities: list[set[str]] = []
 
     for component in nx.connected_components(G):
-        if len(component) <= 5:
+        if len(component) <= SUBCLUSTER_THRESHOLD:
             communities.append(component)
         else:
             # Sub-cluster large components
@@ -46,7 +49,7 @@ def detect_communities(G: nx.Graph) -> list[set[str]]:
                     subgraph, weight="weight"
                 )
                 for sc in sub_communities:
-                    if len(sc) >= 2:
+                    if len(sc) >= MIN_COMMUNITY_SIZE:
                         communities.append(set(sc))
                     # Singletons from sub-clustering are dropped
             except Exception:
@@ -70,103 +73,91 @@ def _get_signal_breakdown(members: set[str], scored_pairs: list[dict]) -> dict[s
     return {k: round(v / edge_count, 4) for k, v in signal_totals.items()}
 
 
+def _avg_similarity(members: set[str], scored_pairs: list[dict]) -> float:
+    """Mean edge weight within a cluster."""
+    weights = [
+        pair["score"]
+        for pair in scored_pairs
+        if pair["unitA"] in members and pair["unitB"] in members
+    ]
+    return sum(weights) / len(weights) if weights else 0.0
+
+
+def _directory_spread(members: set[str], units_by_id: dict[str, dict]) -> int:
+    """Count distinct top-level directories for cluster members."""
+    directories: set[str] = set()
+    for uid in members:
+        fp = units_by_id.get(uid, {}).get("filePath", "")
+        if "/" not in fp:
+            continue
+        parts = fp.split("/")
+        if "apps" in parts:
+            idx = parts.index("apps")
+            directories.add(parts[idx + 1] if idx + 1 < len(parts) else fp.rsplit("/", 1)[0])
+        else:
+            directories.add(parts[0] if parts else fp)
+    return len(directories)
+
+
+def _kind_mix(members: set[str], units_by_id: dict[str, dict]) -> dict[str, int]:
+    """Count unit kinds within a cluster."""
+    counts: dict[str, int] = {}
+    for uid in members:
+        kind = units_by_id.get(uid, {}).get("kind", "unknown")
+        counts[kind] = counts.get(kind, 0) + 1
+    return counts
+
+
+def _shared_callees(members: set[str], units_by_id: dict[str, dict]) -> list[str]:
+    """Callees appearing in >50% of cluster members."""
+    callee_counts: dict[str, int] = {}
+    for uid in members:
+        seen: set[str] = set()
+        for callee in units_by_id.get(uid, {}).get("callees", []):
+            target = callee.get("target", callee) if isinstance(callee, dict) else str(callee)
+            if target and target not in seen:
+                seen.add(target)
+                callee_counts[target] = callee_counts.get(target, 0) + 1
+    threshold = len(members) / 2.0
+    return sorted(name for name, count in callee_counts.items() if count > threshold)
+
+
+def _consumer_overlap(members: set[str], units_by_id: dict[str, dict]) -> float:
+    """Mean pairwise Jaccard of consumer sets across cluster members."""
+    consumer_sets: list[set[str]] = []
+    for uid in members:
+        cids: set[str] = set()
+        for c in units_by_id.get(uid, {}).get("consumers", []):
+            cid = resolve_consumer_id(c)
+            if cid:
+                cids.add(cid)
+        consumer_sets.append(cids)
+
+    total, count = 0.0, 0
+    for i in range(len(consumer_sets)):
+        for j in range(i + 1, len(consumer_sets)):
+            union = consumer_sets[i] | consumer_sets[j]
+            if union:
+                total += len(consumer_sets[i] & consumer_sets[j]) / len(union)
+                count += 1
+    return total / count if count > 0 else 0.0
+
+
 def enrich_cluster(
     members: set[str],
     scored_pairs: list[dict],
     units_by_id: dict[str, dict],
 ) -> dict:
-    """Enrich a cluster with metadata for ranking and reporting.
-
-    Returns a dict with: members, avg_similarity, signal_breakdown,
-    directory_spread, kind_mix, shared_callees, consumer_overlap.
-    """
-    member_list = sorted(members)
-
-    # Average similarity (mean edge weight within cluster)
-    weights: list[float] = []
-    for pair in scored_pairs:
-        if pair["unitA"] in members and pair["unitB"] in members:
-            weights.append(pair["score"])
-    avg_similarity = sum(weights) / len(weights) if weights else 0.0
-
-    # Signal breakdown
-    signal_breakdown = _get_signal_breakdown(members, scored_pairs)
-
-    # Directory spread
-    directories: set[str] = set()
-    for uid in members:
-        fp = units_by_id.get(uid, {}).get("filePath", "")
-        if "/" in fp:
-            # Use the app-level directory (first two path segments after apps/)
-            parts = fp.split("/")
-            if "apps" in parts:
-                idx = parts.index("apps")
-                if idx + 1 < len(parts):
-                    directories.add(parts[idx + 1])
-                else:
-                    directories.add(fp.rsplit("/", 1)[0])
-            else:
-                directories.add(parts[0] if parts else fp)
-    directory_spread = len(directories)
-
-    # Kind mix
-    kind_counts: dict[str, int] = {}
-    for uid in members:
-        kind = units_by_id.get(uid, {}).get("kind", "unknown")
-        kind_counts[kind] = kind_counts.get(kind, 0) + 1
-
-    # Shared callees: callees appearing in >50% of members
-    callee_counts: dict[str, int] = {}
-    for uid in members:
-        unit = units_by_id.get(uid, {})
-        seen: set[str] = set()
-        for callee in unit.get("callees", []):
-            target = callee.get("target", callee) if isinstance(callee, dict) else str(callee)
-            if target and target not in seen:
-                seen.add(target)
-                callee_counts[target] = callee_counts.get(target, 0) + 1
-    threshold_count = len(members) / 2.0
-    shared_callees = sorted(
-        name for name, count in callee_counts.items() if count > threshold_count
-    )
-
-    # Consumer overlap: fraction of consumers shared between any two members
-    all_consumer_sets: list[set[str]] = []
-    for uid in members:
-        unit = units_by_id.get(uid, {})
-        consumers = unit.get("consumers", [])
-        cids: set[str] = set()
-        for c in consumers:
-            if isinstance(c, dict):
-                cid = c.get("id", c.get("unitId", ""))
-            else:
-                cid = str(c)
-            if cid:
-                cids.add(cid)
-        all_consumer_sets.append(cids)
-
-    consumer_overlap = 0.0
-    overlap_count = 0
-    for i in range(len(all_consumer_sets)):
-        for j in range(i + 1, len(all_consumer_sets)):
-            a = all_consumer_sets[i]
-            b = all_consumer_sets[j]
-            union = a | b
-            if union:
-                consumer_overlap += len(a & b) / len(union)
-                overlap_count += 1
-    if overlap_count > 0:
-        consumer_overlap /= overlap_count
-
+    """Enrich a cluster with metadata for ranking and reporting."""
     return {
-        "members": member_list,
+        "members": sorted(members),
         "memberCount": len(members),
-        "avgSimilarity": round(avg_similarity, 4),
-        "signalBreakdown": signal_breakdown,
-        "directorySpread": directory_spread,
-        "kindMix": kind_counts,
-        "sharedCallees": shared_callees,
-        "consumerOverlap": round(consumer_overlap, 4),
+        "avgSimilarity": round(_avg_similarity(members, scored_pairs), 4),
+        "signalBreakdown": _get_signal_breakdown(members, scored_pairs),
+        "directorySpread": _directory_spread(members, units_by_id),
+        "kindMix": _kind_mix(members, units_by_id),
+        "sharedCallees": _shared_callees(members, units_by_id),
+        "consumerOverlap": round(_consumer_overlap(members, units_by_id), 4),
     }
 
 
@@ -210,7 +201,7 @@ def compute_clusters(output_dir: Path, threshold: float = 0.35) -> None:
 
     communities = detect_communities(G)
     # Filter out singletons
-    communities = [c for c in communities if len(c) >= 2]
+    communities = [c for c in communities if len(c) >= MIN_COMMUNITY_SIZE]
     print(f"  Found {len(communities)} clusters.", file=sys.stderr)
 
     clusters: list[dict] = []

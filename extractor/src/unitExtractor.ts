@@ -55,6 +55,7 @@ export function extractUnits(sourceFile: SourceFile, projectRoot: string): CodeU
   return units;
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- extracts metadata from many AST declaration types
 function extractSingleUnit(
   decl: Node,
   exportName: string,

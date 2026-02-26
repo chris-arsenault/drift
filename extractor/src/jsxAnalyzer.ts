@@ -8,6 +8,7 @@ import type { JsxInfo, JsxTreeNode } from "./types.js";
  * Builds a nested tree of JSX elements with map/conditional markers.
  * Strips attributes/props -- we only care about structural nesting.
  */
+// eslint-disable-next-line sonarjs/cognitive-complexity -- inherent AST traversal with many JSX node type checks
 export function analyzeJsx(node: Node): JsxInfo | null {
   // Find return statements that contain JSX
   const returnStatements = node.getDescendantsOfKind(SyntaxKind.ReturnStatement);
@@ -151,87 +152,86 @@ function processJsxChildren(children: Node[]): JsxTreeNode[] {
   return result;
 }
 
+/** Extract JSX trees from a .map() call: items.map(item => <Component />) */
+function processJsxMap(expr: Node): JsxTreeNode[] {
+  if (!Node.isCallExpression(expr)) return [];
+  const callExpr = expr.getExpression();
+  if (!Node.isPropertyAccessExpression(callExpr) || callExpr.getName() !== "map") return [];
+
+  const args = expr.getArguments();
+  if (args.length === 0) return [];
+
+  const results: JsxTreeNode[] = [];
+  for (const jsx of findJsxInBody(args[0])) {
+    const tree = buildJsxTree(jsx, true, false);
+    if (tree) results.push(tree);
+  }
+  return results;
+}
+
+/** Extract JSX from logical AND: condition && <Component /> */
+function processJsxLogicalAnd(expr: Node): JsxTreeNode[] {
+  if (!Node.isBinaryExpression(expr)) return [];
+  if (expr.getOperatorToken().getKind() !== SyntaxKind.AmpersandAmpersandToken) return [];
+
+  return collectConditionalJsx(expr.getRight());
+}
+
+/** Extract JSX from ternary: condition ? <A /> : <B /> */
+function processJsxTernary(expr: Node): JsxTreeNode[] {
+  if (!Node.isConditionalExpression(expr)) return [];
+
+  return [
+    ...collectConditionalJsx(expr.getWhenTrue()),
+    ...collectConditionalJsx(expr.getWhenFalse()),
+  ];
+}
+
+/** Collect JSX trees from a node, marking them as conditional. */
+function collectConditionalJsx(node: Node): JsxTreeNode[] {
+  const results: JsxTreeNode[] = [];
+  if (isJsxNode(node)) {
+    const tree = buildJsxTree(node, false, true);
+    if (tree) results.push(tree);
+  } else {
+    for (const jsx of findJsxInNode(node)) {
+      const tree = buildJsxTree(jsx, false, true);
+      if (tree) results.push(tree);
+    }
+  }
+  return results;
+}
+
 /**
  * Process a JSX expression container ({ ... }).
- * Detects .map() calls and conditional patterns.
+ * Dispatches to pattern-specific handlers for .map(), &&, and ternary.
  */
 function processJsxExpression(node: Node): JsxTreeNode[] {
-  const results: JsxTreeNode[] = [];
-
-  // Get the expression inside the curly braces
   const children = node.getChildren();
-  // JsxExpression has: OpenBraceToken, Expression, CloseBraceToken
   const expr = children.length >= 2 ? children[1] : null;
-  if (!expr) return results;
+  if (!expr) return [];
 
-  // .map() call producing JSX
-  if (Node.isCallExpression(expr)) {
-    const callExpr = expr.getExpression();
-    if (Node.isPropertyAccessExpression(callExpr) && callExpr.getName() === "map") {
-      const args = expr.getArguments();
-      if (args.length > 0) {
-        const callback = args[0];
-        const jsxInCallback = findJsxInBody(callback);
-        for (const jsx of jsxInCallback) {
-          const tree = buildJsxTree(jsx, true, false);
-          if (tree) results.push(tree);
-        }
-      }
-      return results;
-    }
-  }
+  // Try each pattern in order; first match wins
+  const mapResult = processJsxMap(expr);
+  if (mapResult.length > 0) return mapResult;
 
-  // Conditional: condition && <Jsx>
-  if (Node.isBinaryExpression(expr)) {
-    const opKind = expr.getOperatorToken().getKind();
-    if (opKind === SyntaxKind.AmpersandAmpersandToken) {
-      const right = expr.getRight();
-      if (isJsxNode(right)) {
-        const tree = buildJsxTree(right, false, true);
-        if (tree) results.push(tree);
-      } else {
-        // The right side might be a parenthesized JSX
-        const jsxNodes = findJsxInNode(right);
-        for (const jsx of jsxNodes) {
-          const tree = buildJsxTree(jsx, false, true);
-          if (tree) results.push(tree);
-        }
-      }
-      return results;
-    }
-  }
+  const andResult = processJsxLogicalAnd(expr);
+  if (andResult.length > 0) return andResult;
 
-  // Conditional: condition ? <A> : <B>
-  if (Node.isConditionalExpression(expr)) {
-    const whenTrue = expr.getWhenTrue();
-    const whenFalse = expr.getWhenFalse();
-
-    for (const branch of [whenTrue, whenFalse]) {
-      if (isJsxNode(branch)) {
-        const tree = buildJsxTree(branch, false, true);
-        if (tree) results.push(tree);
-      } else {
-        const jsxNodes = findJsxInNode(branch);
-        for (const jsx of jsxNodes) {
-          const tree = buildJsxTree(jsx, false, true);
-          if (tree) results.push(tree);
-        }
-      }
-    }
-    return results;
-  }
+  const ternaryResult = processJsxTernary(expr);
+  if (ternaryResult.length > 0) return ternaryResult;
 
   // Fallback: look for any JSX nodes inside the expression
-  const jsxNodes = findJsxInNode(expr);
-  for (const jsx of jsxNodes) {
+  const results: JsxTreeNode[] = [];
+  for (const jsx of findJsxInNode(expr)) {
     const tree = buildJsxTree(jsx, false, false);
     if (tree) results.push(tree);
   }
-
   return results;
 }
 
 /** Find JSX elements that are direct children or in simple wrappers in a callback body */
+// eslint-disable-next-line sonarjs/cognitive-complexity -- recursive AST search across many wrapper patterns
 function findJsxInBody(node: Node): Node[] {
   const results: Node[] = [];
 

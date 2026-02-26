@@ -41,6 +41,7 @@ function categorizeImport(source: string): ImportEntry["category"] {
  * Analyze all imports in a source file.
  * Also detects store access patterns and data source access.
  */
+// eslint-disable-next-line sonarjs/cognitive-complexity -- classifies imports across multiple categories and patterns
 export function analyzeImports(sourceFile: SourceFile, _projectRoot: string): ImportInfo {
   const imports: ImportEntry[] = [];
   const storeAccess: string[] = [];

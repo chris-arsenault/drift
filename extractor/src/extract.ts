@@ -11,6 +11,7 @@ import type { CodeUnit, ExtractionResult } from "./types.js";
  * Usage:
  *   npx tsx src/extract.ts --project <path> [--output <path>]
  */
+// eslint-disable-next-line sonarjs/cognitive-complexity -- CLI entry point with sequential setup steps
 function main(): void {
   const args = process.argv.slice(2);
   const projectRoot = resolveArg(args, "--project");

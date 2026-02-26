@@ -31,6 +31,7 @@ export function analyzeHooks(node: Node): HookInfo {
   const customHookSet = new Set<string>();
   let stateVariableCount = 0;
 
+  // eslint-disable-next-line sonarjs/cognitive-complexity -- single-pass visitor classifying hook call patterns
   node.forEachDescendant((desc) => {
     if (!Node.isCallExpression(desc)) return;
 
