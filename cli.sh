@@ -230,7 +230,7 @@ Pipeline commands:
   report           Stage 6: Generate report
 
 Optional:
-  embed            Stage 2b: Embed purpose statements (requires Ollama)
+  embed            Stage 2b: Embed purpose statements (built-in TF-IDF, or --ollama-url for Ollama)
 
 Ingestion:
   ingest-purposes  Incorporate purpose statements from Claude

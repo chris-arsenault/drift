@@ -49,12 +49,21 @@ drift cluster                     # Stage 4: community detection
 drift report                      # Stage 6: generate report + manifest
 ```
 
+### Embedding
+
+```bash
+# Embed purpose statements using built-in TF-IDF (default, no external services)
+drift embed
+
+# Embed via Ollama for higher-quality embeddings (optional)
+drift embed --ollama-url http://localhost:11434 --model nomic-embed-text
+```
+
+The `run` command includes embed automatically — it skips gracefully if no purpose statements exist yet.
+
 ### Optional Stages
 
 ```bash
-# Embed purpose statements via local Ollama
-drift embed --ollama-url http://localhost:11434 --model nomic-embed-text
-
 # Structural pattern matching (requires ast-grep/sg)
 drift ast-grep --project <path>
 ```

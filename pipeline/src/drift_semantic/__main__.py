@@ -30,6 +30,7 @@ def run(output_dir: str, threshold: float) -> None:
     from .callgraph import run as cg
     from .cluster import compute_clusters
     from .depcontext import run as dc
+    from .embed import embed_if_available
     from .fingerprint import run as fp
     from .report import generate_report
     from .score import compute_scores
@@ -41,6 +42,7 @@ def run(output_dir: str, threshold: float) -> None:
         ("typesig", lambda: ts(od)),
         ("callgraph", lambda: cg(od)),
         ("depcontext", lambda: dc(od)),
+        ("embed", lambda: embed_if_available(od)),
         ("score", lambda: compute_scores(od, threshold)),
         ("cluster", lambda: compute_clusters(od, threshold)),
         ("report", lambda: generate_report(od)),
@@ -92,10 +94,10 @@ def depcontext(output_dir: str) -> None:
 
 @cli.command()
 @_odir
-@click.option("--ollama-url", type=str, required=True, help="Ollama API URL.")
+@click.option("--ollama-url", type=str, default=None, help="Ollama API URL (uses built-in TF-IDF if omitted).")
 @click.option("--model", type=str, default="nomic-embed-text")
-def embed(output_dir: str, ollama_url: str, model: str) -> None:
-    """Embed purpose statements via Ollama."""
+def embed(output_dir: str, ollama_url: str | None, model: str) -> None:
+    """Embed purpose statements. Uses built-in TF-IDF by default, Ollama if --ollama-url is set."""
     from .embed import embed_purposes
 
     _run_stage("embed", lambda: embed_purposes(Path(output_dir), ollama_url, model))

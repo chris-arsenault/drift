@@ -39,10 +39,10 @@ Output: `structural-patterns.json` (mapping of unit ID to pattern tag array)
 
 ```
 extract → fingerprint → typesig → callgraph → depcontext
-                              ↓
-                        score → cluster → report
-
-Optional: embed (requires Ollama)
+                                                    ↓
+                Claude writes purpose statements → embed
+                                                    ↓
+                                              score → cluster → report
 ```
 
 ### Stage 1: Extract
@@ -61,9 +61,9 @@ Computes structural fingerprints per unit from Stage 1 data:
 | behaviorFlags | Binary vector of behavior markers |
 | dataAccessPattern | Sparse vector over store/database vocabulary |
 
-### Stage 2b: Embed (optional)
+### Stage 2b: Embed
 
-Embeds purpose statements via local Ollama. Only runs if Ollama URL is configured AND purpose statements exist (written by Claude via the skill). Adds a semantic similarity signal to scoring.
+Embeds purpose statements written by Claude into vectors for semantic comparison. Uses built-in TF-IDF by default (no external services). Optionally uses Ollama for higher-quality embeddings (`--ollama-url`). Runs automatically as part of `drift run` — skips gracefully if no purpose statements exist yet.
 
 ### Stage 2c: Type Signatures
 
@@ -134,7 +134,7 @@ Generates final output from all artifacts:
 | coOccurrence | Cosine similarity on co-occurrence vectors | All |
 | neighborhood | Hash match at radius 1 (1.0) or radius 2 (0.6) | All |
 | structuralPattern | Jaccard on ast-grep pattern tags | If ast-grep available |
-| semantic | Cosine similarity on Ollama embeddings | If embeddings available |
+| semantic | Cosine similarity on purpose statement embeddings | If embeddings available |
 
 ### Weight Adaptation
 
@@ -157,7 +157,7 @@ All artifacts are written to `$DRIFT_OUTPUT_DIR` (default: `.drift-audit/semanti
 | `type-signatures.json` | Typesig | Normalized type hashes |
 | `call-graph.json` | Callgraph | Callee vectors, sequences, chain patterns |
 | `dependency-context.json` | Depcontext | Consumer profiles, co-occurrence, neighborhoods |
-| `semantic-embeddings.json` | Embed | Ollama embeddings (optional) |
+| `semantic-embeddings.json` | Embed | Purpose statement embeddings (TF-IDF or Ollama) |
 | `structural-patterns.json` | ast-grep | Pattern tags per unit (optional) |
 | `similarity-matrix.json` | Score | Scored pairs above threshold |
 | `clusters.json` | Cluster | Ranked communities with enrichment |

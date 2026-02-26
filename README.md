@@ -30,7 +30,7 @@ This installs six skills into `.claude/skills/` and configures your project's `.
 - **Python 3.10+** — for the scoring pipeline and library management
 - **ast-grep** (`sg`) — optional, adds structural pattern matching
 
-Dependencies auto-install on first run. No API keys, no databases, no Docker.
+Dependencies auto-install on first run. No API keys, no external services, no Docker.
 
 ## Usage
 
@@ -116,19 +116,22 @@ See [docs/library.md](docs/library.md) for details.
 
 ## How It Works
 
-The semantic analysis pipeline (used by `/drift-audit-semantic`) is a deterministic tool that runs independently of the LLM:
+The semantic analysis pipeline (used by `/drift-audit-semantic`) combines deterministic structural analysis with Claude's semantic understanding:
 
 ```
 extract → fingerprint → typesig → callgraph → depcontext
-                              ↓
-                        score → cluster → report
+                                                    ↓
+                Claude writes purpose statements → embed
+                                                    ↓
+                                              score → cluster → report
 ```
 
 1. **Extract** — TypeScript AST parsing via ts-morph. Extracts all exported code units with type info, JSX structure, hook usage, imports, call graph, consumer graph, and behavior markers.
 2. **Fingerprint** — Computes structural fingerprints: JSX hashes, hook profile vectors, import constellations (IDF-weighted), behavior flags.
-3. **Score** — Pairwise similarity across 13 signals with adaptive weight matrix.
-4. **Cluster** — Graph-based community detection (connected components + greedy modularity).
-5. **Report** — Markdown report, drift manifest, dependency atlas.
+3. **Embed** — Claude reads source code and writes purpose statements describing what each unit does. The pipeline embeds these via built-in TF-IDF for semantic comparison.
+4. **Score** — Pairwise similarity across 13+ signals with adaptive weight matrix. When purpose statements are available, semantic similarity is weighted at 20%.
+5. **Cluster** — Graph-based community detection (connected components + greedy modularity).
+6. **Report** — Markdown report, drift manifest, dependency atlas.
 
 The other two audit types (structural and behavioral) are agent-driven — Claude reads your source files directly, using `scripts/discover.sh` for initial inventory.
 

@@ -108,24 +108,35 @@ bash "$DRIFT_SEMANTIC/cli.sh" ingest-findings --file .drift-audit/semantic/findi
 bash "$DRIFT_SEMANTIC/cli.sh" report
 ```
 
-### Phase 3: Optional Enrichment
+### Phase 3: Purpose Statements
 
-For higher precision on ambiguous clusters, generate purpose statements:
+Generate purpose statements for the extracted code units. This is the core semantic
+analysis step — it captures what each unit DOES in natural language, enabling the
+pipeline to compare units by meaning rather than just structure.
 
-1. For each unit in uncertain clusters, read the source and write a one-sentence
-   description of what it does
-2. Save as `purpose-statements.json`:
+1. Read `.drift-audit/semantic/code-units.json` to get the list of extracted units
+2. For each unit (or at minimum the top candidates from initial clustering), read the
+   source code and write a one-sentence description of its functional purpose
+3. Save as `purpose-statements.json`:
    ```json
-   [{ "unitId": "path/file.tsx::ComponentName", "purpose": "Renders a..." }]
+   [
+     { "unitId": "src/components/ButtonHeader.tsx::ButtonHeader", "purpose": "Renders a horizontal bar of contextual action buttons for the current view" },
+     { "unitId": "src/components/ToolBar.tsx::ToolBar", "purpose": "Renders a horizontal toolbar of action buttons with icons" }
+   ]
    ```
-3. If Ollama is available:
+4. Ingest and re-run the pipeline with semantic embeddings:
    ```bash
    bash "$DRIFT_SEMANTIC/cli.sh" ingest-purposes --file .drift-audit/semantic/purpose-statements.json
-   bash "$DRIFT_SEMANTIC/cli.sh" embed --ollama-url http://localhost:11434
+   bash "$DRIFT_SEMANTIC/cli.sh" embed
    bash "$DRIFT_SEMANTIC/cli.sh" score
    bash "$DRIFT_SEMANTIC/cli.sh" cluster
+   bash "$DRIFT_SEMANTIC/cli.sh" report
    ```
-   This re-scores with semantic embeddings as an additional signal.
+
+The embed step uses built-in TF-IDF to compare purpose statements — no external
+services required. The re-scored clusters now include semantic similarity as a signal,
+making clusters much more precise for catching functionally identical code with
+different names.
 
 ### Phase 4: Targeted Exploration
 
