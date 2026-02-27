@@ -25,37 +25,91 @@ from .io_utils import write_artifact
 
 PROPERTY_CATEGORIES: dict[str, set[str]] = {
     "layout": {
-        "display", "flex", "flex-direction", "flex-wrap", "flex-grow",
-        "flex-shrink", "flex-basis", "grid-template-columns",
-        "grid-template-rows", "align-items", "justify-content",
-        "align-self", "place-items", "order", "gap", "row-gap", "column-gap",
+        "display",
+        "flex",
+        "flex-direction",
+        "flex-wrap",
+        "flex-grow",
+        "flex-shrink",
+        "flex-basis",
+        "grid-template-columns",
+        "grid-template-rows",
+        "align-items",
+        "justify-content",
+        "align-self",
+        "place-items",
+        "order",
+        "gap",
+        "row-gap",
+        "column-gap",
     },
     "spacing": {
-        "margin", "margin-top", "margin-right", "margin-bottom",
-        "margin-left", "padding", "padding-top", "padding-right",
-        "padding-bottom", "padding-left",
+        "margin",
+        "margin-top",
+        "margin-right",
+        "margin-bottom",
+        "margin-left",
+        "padding",
+        "padding-top",
+        "padding-right",
+        "padding-bottom",
+        "padding-left",
     },
     "sizing": {
-        "width", "height", "min-width", "max-width", "min-height",
-        "max-height", "overflow", "overflow-x", "overflow-y", "box-sizing",
+        "width",
+        "height",
+        "min-width",
+        "max-width",
+        "min-height",
+        "max-height",
+        "overflow",
+        "overflow-x",
+        "overflow-y",
+        "box-sizing",
     },
     "typography": {
-        "font-family", "font-size", "font-weight", "line-height",
-        "letter-spacing", "text-align", "text-decoration",
-        "text-transform", "color", "white-space", "word-break",
+        "font-family",
+        "font-size",
+        "font-weight",
+        "line-height",
+        "letter-spacing",
+        "text-align",
+        "text-decoration",
+        "text-transform",
+        "color",
+        "white-space",
+        "word-break",
     },
     "visual": {
-        "background", "background-color", "background-image",
-        "border", "border-radius", "box-shadow", "opacity",
-        "outline", "border-color", "border-width", "border-style", "filter",
+        "background",
+        "background-color",
+        "background-image",
+        "border",
+        "border-radius",
+        "box-shadow",
+        "opacity",
+        "outline",
+        "border-color",
+        "border-width",
+        "border-style",
+        "filter",
     },
     "positioning": {
-        "position", "top", "right", "bottom", "left",
-        "z-index", "transform", "inset",
+        "position",
+        "top",
+        "right",
+        "bottom",
+        "left",
+        "z-index",
+        "transform",
+        "inset",
     },
     "animation": {
-        "transition", "animation", "animation-duration",
-        "animation-delay", "animation-name",
+        "transition",
+        "animation",
+        "animation-duration",
+        "animation-delay",
+        "animation-name",
     },
 }
 
@@ -94,7 +148,7 @@ def _parse_declarations(block: str) -> list[dict]:
             continue
         colon_idx = decl.index(":")
         prop = decl[:colon_idx].strip().lower()
-        value = decl[colon_idx + 1:].strip()
+        value = decl[colon_idx + 1 :].strip()
         if prop:
             declarations.append({"name": prop, "value": value})
     return declarations
@@ -118,12 +172,12 @@ def _extract_prefix(class_name: str) -> str:
     # For hyphenated names like 'filter-panel-header', take up to the last hyphen
     # if there are 3+ segments
     parts = base.split("-")
-    if len(parts) >= 3:
+    if len(parts) >= 3:  # noqa: PLR2004
         return "-".join(parts[:-1])
     return base
 
 
-def parse_css(content: str, file_path: str = "") -> list[dict]:
+def parse_css(content: str, file_path: str = "") -> list[dict]:  # noqa: C901, PLR0912, PLR0915
     """Parse CSS content into a list of rule dicts.
 
     Each rule has: selector, properties, classNames, mediaQuery, lineRange,
@@ -195,21 +249,29 @@ def parse_css(content: str, file_path: str = "") -> list[dict]:
                 declarations = _parse_declarations(block_content)
                 if declarations and current_selector:
                     rule = _build_rule(
-                        current_selector, declarations, None,
-                        selector_start, i, char_to_line,
+                        current_selector,
+                        declarations,
+                        None,
+                        selector_start,
+                        i,
+                        char_to_line,
                     )
                     rules.append(rule)
                 current_selector = ""
                 depth = 0
                 selector_start = i + 1
-            elif depth == 2 and current_media is not None:
+            elif depth == 2 and current_media is not None:  # noqa: PLR2004
                 # End of a rule inside @media
                 block_content = cleaned[block_start:i]
                 declarations = _parse_declarations(block_content)
                 if declarations and current_selector:
                     rule = _build_rule(
-                        current_selector, declarations, current_media,
-                        selector_start, i, char_to_line,
+                        current_selector,
+                        declarations,
+                        current_media,
+                        selector_start,
+                        i,
+                        char_to_line,
                     )
                     rules.append(rule)
                 current_selector = ""
@@ -267,7 +329,7 @@ def _build_rule(
 # ---------------------------------------------------------------------------
 
 
-def _compute_file_aggregates(rules: list[dict]) -> dict:
+def _compute_file_aggregates(rules: list[dict]) -> dict:  # noqa: C901
     """Compute per-file fingerprints from parsed rules."""
     # Selector prefixes
     all_prefixes: set[str] = set()
@@ -327,6 +389,7 @@ def _build_import_map(code_units_path: Path) -> dict[str, list[str]]:
         return import_map
 
     import json
+
     with open(code_units_path, encoding="utf-8") as f:
         data = json.load(f)
 
@@ -423,16 +486,18 @@ def extract_css(project_root: Path, output_dir: Path) -> None:
         # Keep only fingerprints and selector info per rule
         compact_rules = []
         for rule in rules:
-            compact_rules.append({
-                "selector": rule["selector"],
-                "classNames": rule["classNames"],
-                "propertyCount": len(rule["properties"]),
-                "propertyNames": sorted({d["name"] for d in rule["properties"]}),
-                "mediaQuery": rule["mediaQuery"],
-                "lineRange": rule["lineRange"],
-                "propertyValueHash": rule["propertyValueHash"],
-                "propertySetHash": rule["propertySetHash"],
-            })
+            compact_rules.append(
+                {
+                    "selector": rule["selector"],
+                    "classNames": rule["classNames"],
+                    "propertyCount": len(rule["properties"]),
+                    "propertyNames": sorted({d["name"] for d in rule["properties"]}),
+                    "mediaQuery": rule["mediaQuery"],
+                    "lineRange": rule["lineRange"],
+                    "propertyValueHash": rule["propertyValueHash"],
+                    "propertySetHash": rule["propertySetHash"],
+                }
+            )
 
         unit = {
             "id": rel_path,
@@ -450,9 +515,9 @@ def extract_css(project_root: Path, output_dir: Path) -> None:
     result = {
         "metadata": {
             "projectRoot": str(project_root),
-            "timestamp": __import__("datetime").datetime.now(
-                __import__("datetime").timezone.utc
-            ).isoformat(),
+            "timestamp": __import__("datetime")
+            .datetime.now(__import__("datetime").timezone.utc)
+            .isoformat(),
             "fileCount": len(units),
             "totalRules": total_rules,
             "extractionTimeMs": int(elapsed * 1000),

@@ -177,7 +177,7 @@ def _render_css_cluster_section(cluster: dict) -> list[str]:
     import os
 
     member_names = [os.path.basename(m) for m in members[:4]]
-    if len(members) > 4:
+    if len(members) > 4:  # noqa: PLR2004
         member_names.append(f"+{len(members) - 4} more")
     title = ", ".join(member_names)
 
@@ -205,7 +205,7 @@ def _render_css_cluster_section(cluster: dict) -> list[str]:
 
     if linked:
         lines.append(f"**Linked Components:** {', '.join(linked[:10])}")
-        if len(linked) > 10:
+        if len(linked) > 10:  # noqa: PLR2004
             lines.append(f"  ...and {len(linked) - 10} more")
         lines.append("")
 
@@ -407,7 +407,7 @@ def _build_css_manifest_entry(cluster: dict) -> dict:
         "name": f"CSS Duplication: {', '.join(os.path.basename(m) for m in members[:3])}",
         "type": "css",
         "description": description,
-        "impact": "HIGH" if avg_sim >= 0.7 else "MEDIUM" if avg_sim >= 0.5 else "LOW",
+        "impact": "HIGH" if avg_sim >= 0.7 else "MEDIUM" if avg_sim >= 0.5 else "LOW",  # noqa: PLR2004
         "total_files": len(members),
         "variants": variants,
         "linked_components": linked,
@@ -465,10 +465,7 @@ def _update_manifest(
         manifest = {"areas": []}
 
     # Remove existing semantic and CSS entries
-    manifest["areas"] = [
-        a for a in manifest["areas"]
-        if a.get("type") not in ("semantic", "css")
-    ]
+    manifest["areas"] = [a for a in manifest["areas"] if a.get("type") not in ("semantic", "css")]
 
     # Append new entries
     manifest["areas"].extend(new_entries)
@@ -477,7 +474,6 @@ def _update_manifest(
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     with open(manifest_path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)
-    total = len(new_entries) + len(css_entries)
     print(
         f"  Manifest updated: {len(new_entries)} semantic + {len(css_entries)} CSS entries -> {manifest_path}",
         file=sys.stderr,

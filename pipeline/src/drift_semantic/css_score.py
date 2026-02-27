@@ -179,13 +179,15 @@ def compute_css_scores(output_dir: Path, threshold: float = 0.40) -> None:
 
             if score >= threshold:
                 dominant = max(signals, key=lambda s: signals[s]) if signals else ""
-                scored_pairs.append({
-                    "unitA": id_a,
-                    "unitB": id_b,
-                    "score": round(score, 4),
-                    "signals": {k: round(v, 4) for k, v in signals.items()},
-                    "dominantSignal": dominant,
-                })
+                scored_pairs.append(
+                    {
+                        "unitA": id_a,
+                        "unitB": id_b,
+                        "score": round(score, 4),
+                        "signals": {k: round(v, 4) for k, v in signals.items()},
+                        "dominantSignal": dominant,
+                    }
+                )
 
     scored_pairs.sort(key=lambda p: p["score"], reverse=True)
     elapsed = time.time() - t0
@@ -229,7 +231,7 @@ def compute_css_clusters(output_dir: Path, threshold: float = 0.40) -> None:
     )
 
     # Detect communities
-    from .cluster import detect_communities, MIN_COMMUNITY_SIZE
+    from .cluster import MIN_COMMUNITY_SIZE, detect_communities
 
     communities = detect_communities(G)
     communities = [c for c in communities if len(c) >= MIN_COMMUNITY_SIZE]
@@ -255,7 +257,7 @@ def compute_css_clusters(output_dir: Path, threshold: float = 0.40) -> None:
     write_artifact("css-clusters.json", clusters, output_dir)
 
 
-def _enrich_css_cluster(
+def _enrich_css_cluster(  # noqa: C901, PLR0912
     members: set[str],
     scored_pairs: list[dict],
     units_by_id: dict[str, dict],
@@ -277,7 +279,9 @@ def _enrich_css_cluster(
             edge_count += 1
             for sig_name, sig_val in pair.get("signals", {}).items():
                 signal_totals[sig_name] = signal_totals.get(sig_name, 0.0) + sig_val
-    signal_breakdown = {k: round(v / edge_count, 4) for k, v in signal_totals.items()} if edge_count else {}
+    signal_breakdown = (
+        {k: round(v / edge_count, 4) for k, v in signal_totals.items()} if edge_count else {}
+    )
 
     # Directory spread
     directories: set[str] = set()
@@ -304,7 +308,7 @@ def _enrich_css_cluster(
         if refs:
             prop_sets.append(refs)
     shared_props: set[str] = set()
-    if len(prop_sets) >= 2:
+    if len(prop_sets) >= 2:  # noqa: PLR2004
         shared_props = prop_sets[0]
         for ps in prop_sets[1:]:
             shared_props &= ps

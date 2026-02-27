@@ -1,6 +1,5 @@
 # Dependencies
 extractor/node_modules/
-extractor/package-lock.json
 pipeline/.venv/
 pipeline/src/*.egg-info/
 

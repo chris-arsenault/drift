@@ -53,6 +53,8 @@ No coverage targets. The extractor has no unit tests — every exported function
 | `depcontext.py` | Shannon entropy, consumer profile, co-occurrence, neighborhood hash |
 | `score.py` | weight adaptation, comparability, all signal functions |
 | `cluster.py` | community detection, cluster ranking |
+| `css_extract.py` | comment stripping, declaration parsing, class/prefix extraction, rule parsing, fingerprinting, file aggregates |
+| `css_score.py` | Dice coefficient, all 6 CSS signals, pairwise scoring |
 
 ## Conventions
 

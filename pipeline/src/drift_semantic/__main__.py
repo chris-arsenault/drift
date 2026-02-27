@@ -24,7 +24,12 @@ def cli() -> None:
 
 @cli.command()
 @_odir
-@click.option("--project", type=click.Path(exists=True), default=None, help="Project root (for CSS extraction).")
+@click.option(
+    "--project",
+    type=click.Path(exists=True),
+    default=None,
+    help="Project root (for CSS extraction).",
+)
 @click.option("--threshold", type=float, default=0.35)
 def run(output_dir: str, project: str | None, threshold: float) -> None:
     """Run the full deterministic pipeline (all stages except extract)."""
@@ -105,7 +110,9 @@ def depcontext(output_dir: str) -> None:
 
 @cli.command()
 @_odir
-@click.option("--ollama-url", type=str, default=None, help="Ollama API URL (uses built-in TF-IDF if omitted).")
+@click.option(
+    "--ollama-url", type=str, default=None, help="Ollama API URL (uses built-in TF-IDF if omitted)."
+)
 @click.option("--model", type=str, default="nomic-embed-text")
 def embed(output_dir: str, ollama_url: str | None, model: str) -> None:
     """Embed purpose statements. Uses built-in TF-IDF by default, Ollama if --ollama-url is set."""
@@ -116,7 +123,12 @@ def embed(output_dir: str, ollama_url: str | None, model: str) -> None:
 
 @cli.command("css-extract")
 @_odir
-@click.option("--project", type=click.Path(exists=True), required=True, help="Project root to scan for CSS files.")
+@click.option(
+    "--project",
+    type=click.Path(exists=True),
+    required=True,
+    help="Project root to scan for CSS files.",
+)
 def css_extract(output_dir: str, project: str) -> None:
     """Extract CSS units from .css files."""
     from .css_extract import run

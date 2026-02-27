@@ -21,11 +21,37 @@ except ImportError:
     httpx = None  # type: ignore[assignment]
 
 # Stopwords for TF-IDF tokenization (common English words that add noise)
-_STOPWORDS = frozenset([
-    "a", "an", "and", "are", "as", "at", "be", "by", "for", "from",
-    "has", "have", "in", "is", "it", "its", "of", "on", "or", "that",
-    "the", "this", "to", "was", "were", "which", "with",
-])
+_STOPWORDS = frozenset(
+    [
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "be",
+        "by",
+        "for",
+        "from",
+        "has",
+        "have",
+        "in",
+        "is",
+        "it",
+        "its",
+        "of",
+        "on",
+        "or",
+        "that",
+        "the",
+        "this",
+        "to",
+        "was",
+        "were",
+        "which",
+        "with",
+    ]
+)
 
 
 # ---------------------------------------------------------------------------

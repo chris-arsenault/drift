@@ -4,13 +4,22 @@ The drift library centralizes guard artifacts — ESLint rules, ADRs, pattern do
 
 ## How It Works
 
-```
-Project A                    Library (~/.drift/library)              Project B
-─────────                    ──────────────────────────              ─────────
-eslint-rules/                rules/eslint/                           eslint-rules/
-  no-direct-fetch.js  ──publish──>  no-direct-fetch.js  ──sync──>    no-direct-fetch.js
-docs/adr/                    adr/                                    docs/adr/
-  0001-fetch-pattern.md ──>    0001-fetch-pattern.md    ──>           0001-fetch-pattern.md
+```mermaid
+graph LR
+    subgraph "Project A"
+        A1["eslint-rules/<br/>no-direct-fetch.js"]
+        A2["docs/adr/<br/>0001-fetch-pattern.md"]
+    end
+    subgraph "Library (~/.drift/library)"
+        L1["rules/eslint/<br/>no-direct-fetch.js"]
+        L2["adr/<br/>0001-fetch-pattern.md"]
+    end
+    subgraph "Project B"
+        B1["eslint-rules/<br/>no-direct-fetch.js"]
+        B2["docs/adr/<br/>0001-fetch-pattern.md"]
+    end
+    A1 -->|publish| L1 -->|sync| B1
+    A2 -->|publish| L2 -->|sync| B2
 ```
 
 1. **drift-guard** generates artifacts in a project

@@ -1,6 +1,4 @@
-# Semantic Drift Detection Pipeline
-
-## Design Document v4
+# Design Document
 
 ### Problem
 
@@ -21,44 +19,38 @@ context. The skill orchestrates: run tool → read structured output → Claude
 interprets → optionally feed interpretation back to tool.
 
 **No per-token API costs.** The tool requires no API keys in its default
-configuration. If the user wants embedding-based similarity, they configure
-a local Ollama URL. Everything else is pure computation.
+configuration. Purpose statement embedding uses built-in TF-IDF. If the
+user wants higher-quality embeddings, they can configure a local Ollama URL.
+Everything else is pure computation.
 
 ---
 
 ## Architecture
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│  CLAUDE CODE SESSION                                             │
-│                                                                  │
-│  ┌──────────────────────┐     ┌───────────────────────────────┐  │
-│  │  SKILL: drift-       │     │  SKILL: drift-                │  │
-│  │  semantic-audit      │     │  semantic-explore             │  │
-│  │                      │     │                               │  │
-│  │  1. Invokes CLI      │     │  Queries index, Claude        │  │
-│  │  2. Reads artifacts  │     │  interprets results           │  │
-│  │  3. Claude interprets│     │  conversationally             │  │
-│  │     clusters         │     │                               │  │
-│  │  4. Optionally feeds │     │                               │  │
-│  │     purpose stmts    │     │                               │  │
-│  │     back to CLI      │     │                               │  │
-│  └──────────┬───────────┘     └───────────────────────────────┘  │
-│             │                                                    │
-│             │  invoke / read / write                              │
-│             │                                                    │
-│  ┌──────────▼────────────────────────────────────────────────┐   │
-│  │  CLI: drift-semantic                                      │   │
-│  │  Fully deterministic. No API keys. No LLM calls.          │   │
-│  │                                                           │   │
-│  │  extract → fingerprint → typesig → callgraph → depctx    │   │
-│  │                    ↓                                      │   │
-│  │              score → cluster → report                     │   │
-│  │                                                           │   │
-│  │  Optional: embed (requires Ollama URL)                    │   │
-│  └───────────────────────────────────────────────────────────┘   │
-│                                                                  │
-└──────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    subgraph Claude Code Session
+        subgraph "SKILL: drift-audit-semantic"
+            S1["1. Invokes CLI"]
+            S2["2. Reads artifacts"]
+            S3["3. Claude interprets clusters"]
+            S4["4. Feeds purpose stmts back to CLI"]
+        end
+        subgraph "inspect / search commands"
+            IS["Queries index, Claude<br/>interprets results conversationally"]
+        end
+    end
+
+    S4 -->|"invoke / read / write"| CLI
+
+    subgraph "CLI: drift"
+        direction LR
+        CLI["Fully deterministic · No API keys · No LLM calls"]
+        extract --> fingerprint --> typesig --> callgraph --> depcontext
+        depcontext --> score --> cluster --> report
+        css-extract --> css-score --> report
+        note["Optional: embed — TF-IDF built-in, Ollama for upgrade"]
+    end
 ```
 
 ---
@@ -74,8 +66,9 @@ a local Ollama URL. Everything else is pure computation.
 | Type signature normalization | ✓ | |
 | Pairwise similarity scoring | ✓ | |
 | Clustering | ✓ | |
+| CSS extraction and scoring | ✓ | |
 | Generate purpose statements | | ✓ (reads code, writes statements) |
-| Embed purpose statements | ✓ (Ollama) or skip | |
+| Embed purpose statements | ✓ (TF-IDF or Ollama) | |
 | Verify cluster equivalence | | ✓ (reads cluster + source code) |
 | Present findings to user | | ✓ |
 | Decide what to consolidate | | ✓ (with user) |
@@ -137,6 +130,26 @@ Behavior Markers:
 **Performance:** 10-30 seconds for 200K lines. The call graph and consumer
 graph reuse the same AST traversal and add marginal time.
 
+### Stage 1b: CSS EXTRACT (tool)
+
+Regex-based CSS parser. Walks the project for `.css` files (skipping
+`node_modules/`, `dist/`, and test directories), parses rules into selectors
+and declaration blocks, and computes inline fingerprints.
+
+**Per-rule:** `propertyValueHash` (SHA-256 of sorted `prop:value` pairs — catches
+exact copies) and `propertySetHash` (SHA-256 of sorted property names — catches
+near-copies with different values).
+
+**Per-file aggregates:** `selectorPrefixes` (BEM), `customPropertyDeclarations` /
+`customPropertyReferences`, `propertyFrequency` (sparse vector of property-name
+counts), `categoryProfile` (7-element vector: layout, spacing, sizing, typography,
+visual, positioning, animation).
+
+**Component linking:** Reads `code-units.json` import data to populate `importedBy`
+on each CSS unit.
+
+**Output:** `css-units.json`
+
 ### Stage 2a: STRUCTURAL FINGERPRINT (tool)
 
 Computed per unit from Stage 1 data:
@@ -149,17 +162,21 @@ Computed per unit from Stage 1 data:
 
 **Output:** `structural-fingerprints.json`
 
-### Stage 2b: SEMANTIC EMBED (tool, optional, requires Ollama)
+### Stage 2b: SEMANTIC EMBED (tool, optional)
 
-**Only runs if Ollama URL is configured AND purpose statements exist.**
+**Only runs if purpose statements exist.** Uses built-in TF-IDF by default.
+Optionally uses Ollama for higher-quality embeddings if `--ollama-url` is provided.
 
 The skill generates purpose statements (Claude reads code, writes one-sentence
-descriptions). The tool embeds them via Ollama. This stage is not required —
-the scoring stage adapts its weights based on available signals.
+descriptions). The tool embeds them for semantic comparison. This stage is not
+required — the scoring stage adapts its weights based on available signals.
 
 ```bash
-# Skill writes purpose-statements.json, then:
-drift-semantic embed --ollama-url http://localhost:11434 --model nomic-embed-text
+# Built-in TF-IDF (default, no external services):
+drift embed
+
+# Higher-quality embeddings via Ollama (optional):
+drift embed --ollama-url http://localhost:11434 --model nomic-embed-text
 ```
 
 **Input:** `purpose-statements.json` (written by skill)
@@ -275,6 +292,25 @@ Graph-based community detection over the similarity matrix:
 
 **Output:** `clusters.json`
 
+### Stage 3b: CSS SCORE & CLUSTER (tool)
+
+Pairwise CSS similarity across 6 signals:
+
+| Signal | Weight | Method |
+|--------|--------|--------|
+| ruleExactMatch | 0.30 | Dice on `propertyValueHash` multisets |
+| ruleSetMatch | 0.25 | Dice on `propertySetHash` multisets |
+| propertyFrequency | 0.20 | Cosine on property-name frequency vectors |
+| categoryProfile | 0.10 | Cosine on category vectors |
+| customPropertyVocab | 0.10 | Jaccard on custom-property reference sets |
+| selectorPrefixOverlap | 0.05 | Jaccard on prefix sets |
+
+Threshold: 0.40. Clustering reuses the same NetworkX community detection as
+Stage 4. Each CSS cluster is enriched with linked components, shared custom
+properties, and directory spread.
+
+**Output:** `css-similarity.json`, `css-clusters.json`
+
 ### Stage 5: VERIFY (Claude Code, via skill)
 
 **Not a tool stage.** The skill reads `clusters.json`, Claude reads the actual
@@ -296,10 +332,11 @@ For each cluster, Claude produces:
 
 ### Stage 6: REPORT (tool)
 
-Reads all artifacts including `findings.json` (if present) and generates:
+Reads all artifacts — including `findings.json` and `css-clusters.json` if
+present — and generates:
 
-- `semantic-drift-report.md` — human-readable findings
-- `drift-manifest.json` entries with `"type": "semantic"`
+- `semantic-drift-report.md` — human-readable findings (JS/TS and CSS sections)
+- `drift-manifest.json` — structured entries (`"type": "semantic"` and `"type": "css"`)
 - `dependency-atlas.json` — graph structure for visualization
 
 If findings don't exist, generates a preliminary report from clusters alone
@@ -309,22 +346,32 @@ that shows "these are structurally similar, pending semantic verification."
 
 ## Data Flow
 
-```
-                    Tool writes              Skill/Claude writes
-                    ──────────               ──────────────────
-Stage 1:            code-units.json
-Stage 2a:           structural-fingerprints.json
-Stage 2b:                                    purpose-statements.json
-                    semantic-embeddings.json  (tool embeds via Ollama)
-Stage 2c:           type-signatures.json
-Stage 2d:           call-graph.json
-Stage 2e:           dependency-context.json
-Stage 3:            similarity-matrix.json
-Stage 4:            clusters.json
-Stage 5:                                     findings.json
-Stage 6:            semantic-drift-report.md
-                    drift-manifest.json
-                    dependency-atlas.json
+```mermaid
+graph LR
+    subgraph "Tool writes"
+        CU["code-units.json"]
+        CSS_U["css-units.json"]
+        SF["structural-fingerprints.json"]
+        SE["semantic-embeddings.json"]
+        TS["type-signatures.json"]
+        CG["call-graph.json"]
+        DC["dependency-context.json"]
+        SM["similarity-matrix.json"]
+        CS["css-similarity.json"]
+        CC["css-clusters.json"]
+        CL["clusters.json"]
+        RPT["semantic-drift-report.md"]
+        MAN["drift-manifest.json"]
+        ATL["dependency-atlas.json"]
+    end
+
+    subgraph "Skill / Claude writes"
+        PS["purpose-statements.json"]
+        FN["findings.json"]
+    end
+
+    PS -->|"ingest-purposes"| SE
+    FN -->|"ingest-findings"| RPT
 ```
 
 Two files flow FROM Claude TO the tool. Everything else flows FROM the tool
@@ -337,86 +384,80 @@ validate and incorporate the inbound files.
 
 ```bash
 # Full pipeline (deterministic stages only)
-drift-semantic run --project .
+drift run --project .
 
 # Individual stages
-drift-semantic extract --project .
-drift-semantic fingerprint
-drift-semantic typesig
-drift-semantic callgraph
-drift-semantic depcontext
-drift-semantic score
-drift-semantic cluster
-drift-semantic report
+drift extract --project .
+drift fingerprint
+drift typesig
+drift callgraph
+drift depcontext
+drift score
+drift cluster
+drift report
 
-# Optional embedding (requires Ollama)
-drift-semantic embed --ollama-url http://localhost:11434 --model nomic-embed-text
+# CSS stages
+drift css-extract --project .
+drift css-score
+
+# Optional embedding (TF-IDF built-in; Ollama optional)
+drift embed
+drift embed --ollama-url http://localhost:11434 --model nomic-embed-text
 
 # Ingest from Claude
-drift-semantic ingest-purposes --file purpose-statements.json
-drift-semantic ingest-findings --file findings.json
+drift ingest-purposes --file purpose-statements.json
+drift ingest-findings --file findings.json
 
 # Inspection
-drift-semantic inspect unit <unitId>
-drift-semantic inspect similar <unitId> --top 10
-drift-semantic inspect cluster <clusterId>
-drift-semantic inspect graph <unitId> --radius 2
-drift-semantic inspect consumers <unitId>
-drift-semantic inspect callers <unitId>
+drift inspect unit <unitId>
+drift inspect similar <unitId> --top 10
+drift inspect cluster <clusterId>
+drift inspect consumers <unitId>
+drift inspect callers <unitId>
 
-# Structural search (no embeddings needed)
-drift-semantic search --calls <unitId>
-drift-semantic search --called-by <unitId>
-drift-semantic search --co-occurs-with <unitId>
-drift-semantic search --type-like <unitId>
-
-# Semantic search (requires embeddings)
-drift-semantic search --purpose "loads entities from persistence"
-drift-semantic search --similar-to <unitId>
-
-# Incremental
-drift-semantic run --project . --incremental
-
-# Export
-drift-semantic export --format html
-drift-semantic export --format dot
+# Structural search
+drift search calls <unitId>
+drift search called-by <unitId>
+drift search co-occurs-with <unitId>
+drift search type-like <unitId>
 ```
 
 ---
 
 ## Interaction Flows
 
-### Full audit (no Ollama)
+### Full audit
 
 ```
 User: "Run a semantic drift analysis"
 
 Skill:
-  1. $ drift-semantic run --project .
-     → extract, fingerprint, typesig, callgraph, depcontext, score, cluster, report
+  1. $ drift run --project .
+     → extract, fingerprint, typesig, callgraph, depcontext, embed,
+       score, cluster, css-extract, css-score, report
 
   2. Reads clusters.json
      For top N clusters: reads source files of members, assesses equivalence
 
   3. Writes findings.json
 
-  4. $ drift-semantic report   (re-generates with findings)
+  4. $ drift report   (re-generates with findings)
 
   5. Reads semantic-drift-report.md, presents to user
 ```
 
-### Full audit with embeddings (Ollama available)
+### Enrichment with purpose statements
 
 ```
-Same as above, but between steps 1 and 2:
+Between steps 1 and 2 of a full audit:
 
   1a. Reads code-units.json, generates purpose statements for units
       in candidate clusters (Claude reads source, writes descriptions)
   1b. Writes purpose-statements.json
-  1c. $ drift-semantic ingest-purposes --file purpose-statements.json
-  1d. $ drift-semantic embed --ollama-url http://localhost:11434
-  1e. $ drift-semantic score   (re-score with embeddings included)
-  1f. $ drift-semantic cluster (re-cluster with new scores)
+  1c. $ drift ingest-purposes --file purpose-statements.json
+  1d. $ drift embed   (TF-IDF by default, or --ollama-url for upgrade)
+  1e. $ drift score   (re-score with embeddings included)
+  1f. $ drift cluster (re-cluster with new scores)
 ```
 
 ### Targeted exploration
@@ -425,17 +466,17 @@ Same as above, but between steps 1 and 2:
 User: "What's similar to ToolBar?"
 
 Skill:
-  1. $ drift-semantic inspect similar "src/.../ToolBar.tsx::ToolBar" --top 10
+  1. $ drift inspect similar "src/.../ToolBar.tsx::ToolBar" --top 10
   2. Reads results, reads source files of top matches
   3. Interprets and presents conversationally
 ```
 
-### Incremental enrichment across sessions
+### Enrichment across sessions
 
 ```
 Session 1: Run full pipeline, verify top 20 clusters
 Session 2: "Continue verifying clusters" → verify next 20
-Session 3: "Re-run with latest code changes" → incremental run,
+Session 3: "Re-run with latest code changes" → run again,
            re-verify affected clusters
 ```
 

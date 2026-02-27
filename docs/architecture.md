@@ -1,6 +1,6 @@
 # Architecture
 
-drift-semantic is a multi-stage pipeline that detects semantic duplication in TypeScript/React codebases. It has three runtime components orchestrated by a bash CLI.
+drift is a multi-stage pipeline that detects semantic duplication in TypeScript/React codebases. It has three runtime components orchestrated by a bash CLI.
 
 ## Components
 
@@ -39,19 +39,26 @@ Output: `structural-patterns.json` (mapping of unit ID to pattern tag array)
 
 ## Pipeline Stages
 
-```
-extract → fingerprint → typesig → callgraph → depcontext
-                                                    ↓
-                Claude writes purpose statements → embed
-                                                    ↓
-                                              score → cluster ──┐
-                                                                ├→ report
-                                    css-extract → css-score ────┘
+```mermaid
+graph LR
+    extract --> fingerprint --> typesig --> callgraph --> depcontext
+    depcontext --> embed
+    Claude["Claude writes purpose statements"] --> embed
+    embed --> score --> cluster --> report
+    css-extract --> css-score --> report
 ```
 
 ### Stage 1: Extract
 
 TypeScript/ts-morph. Parses all source files, extracts exported code units with full metadata. Handles monorepos with multiple tsconfig.json files. Performance: 10-30 seconds for 200K lines.
+
+### Stage 1b: CSS Extract
+
+Regex-based CSS parser. Walks the project for `.css` files, parses rules with selectors and declarations, computes per-rule fingerprints and per-file aggregates. Links CSS files to importing JS/TS components via `code-units.json`.
+
+Per-rule: `propertyValueHash` (exact match), `propertySetHash` (value-agnostic match).
+
+Per-file: `selectorPrefixes` (BEM), `customPropertyDeclarations/References`, `propertyFrequency`, `categoryProfile` (7-element vector: layout, spacing, sizing, typography, visual, positioning, animation).
 
 ### Stage 2a: Fingerprint
 
@@ -100,24 +107,6 @@ Pairwise similarity across all comparable unit pairs. Computes 13 signals with a
 
 See [Similarity Signals](#similarity-signals) for details.
 
-### Stage 4: Cluster
-
-Graph-based community detection using NetworkX:
-
-1. Build weighted graph from scored pairs
-2. Connected components for initial grouping
-3. Greedy modularity for large clusters (>5 members)
-4. Enrich each cluster: avg similarity, signal breakdown, directory spread, kind mix, shared callees, consumer overlap
-5. Rank by `memberCount * avgSimilarity * directorySpread * kindBonus`
-
-### Stage 1b: CSS Extract
-
-Regex-based CSS parser. Walks the project for `.css` files, parses rules with selectors and declarations, computes per-rule fingerprints and per-file aggregates. Links CSS files to importing JS/TS components via `code-units.json`.
-
-Per-rule: `propertyValueHash` (exact match), `propertySetHash` (value-agnostic match).
-
-Per-file: `selectorPrefixes` (BEM), `customPropertyDeclarations/References`, `propertyFrequency`, `categoryProfile` (7-element vector: layout, spacing, sizing, typography, visual, positioning, animation).
-
 ### Stage 3b: CSS Score & Cluster
 
 Pairwise CSS similarity across 6 signals:
@@ -133,16 +122,26 @@ Pairwise CSS similarity across 6 signals:
 
 Threshold: 0.40. Clustering reuses the same NetworkX community detection as Stage 4.
 
+### Stage 4: Cluster
+
+Graph-based community detection using NetworkX:
+
+1. Build weighted graph from scored pairs
+2. Connected components for initial grouping
+3. Greedy modularity for large clusters (>5 members)
+4. Enrich each cluster: avg similarity, signal breakdown, directory spread, kind mix, shared callees, consumer overlap
+5. Rank by `memberCount * avgSimilarity * directorySpread * kindBonus`
+
 ### Stage 5: Verify (Claude Code skill, not a tool stage)
 
 Claude reads cluster members' source code and assesses semantic equivalence. Writes `findings.json` with verdicts: DUPLICATE, OVERLAPPING, RELATED, or FALSE_POSITIVE.
 
 ### Stage 6: Report
 
-Generates final output from all artifacts:
+Generates final output from all artifacts (including `css-clusters.json` and `findings.json` if present):
 
-- `semantic-drift-report.md` — human-readable findings
-- `drift-manifest.json` — structured entries for each finding
+- `semantic-drift-report.md` — human-readable findings (JS/TS and CSS sections)
+- `drift-manifest.json` — structured entries (`"type": "semantic"` and `"type": "css"`)
 - `dependency-atlas.json` — graph structure for visualization
 
 ## Similarity Signals

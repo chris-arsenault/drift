@@ -1,4 +1,4 @@
-# drift-semantic
+# drift
 
 [![CI](https://github.com/chris-arsenault/drift/actions/workflows/ci.yml/badge.svg)](https://github.com/chris-arsenault/drift/actions/workflows/ci.yml)
 
@@ -118,12 +118,13 @@ See [docs/library.md](docs/library.md) for details.
 
 The semantic analysis pipeline (used by `/drift-audit-semantic`) combines deterministic structural analysis with Claude's semantic understanding:
 
-```
-extract → fingerprint → typesig → callgraph → depcontext
-                                                    ↓
-                Claude writes purpose statements → embed
-                                                    ↓
-                                              score → cluster → report
+```mermaid
+graph LR
+    extract --> fingerprint --> typesig --> callgraph --> depcontext
+    depcontext --> embed
+    Claude["Claude writes purpose statements"] --> embed
+    embed --> score --> cluster --> report
+    css-extract --> css-score --> report
 ```
 
 1. **Extract** — TypeScript AST parsing via ts-morph. Extracts all exported code units with type info, JSX structure, hook usage, imports, call graph, consumer graph, and behavior markers.
@@ -131,7 +132,8 @@ extract → fingerprint → typesig → callgraph → depcontext
 3. **Embed** — Claude reads source code and writes purpose statements describing what each unit does. The pipeline embeds these via built-in TF-IDF for semantic comparison.
 4. **Score** — Pairwise similarity across 13+ signals with adaptive weight matrix. When purpose statements are available, semantic similarity is weighted at 20%.
 5. **Cluster** — Graph-based community detection (connected components + greedy modularity).
-6. **Report** — Markdown report, drift manifest, dependency atlas.
+6. **CSS** — Parallel pipeline extracts CSS rules, fingerprints property sets, and clusters files with similar styling patterns.
+7. **Report** — Markdown report, drift manifest, dependency atlas.
 
 The other two audit types (structural and behavioral) are agent-driven — Claude reads your source files directly, using `scripts/discover.sh` for initial inventory.
 
@@ -169,7 +171,7 @@ See [docs/cli-reference.md](docs/cli-reference.md) for the full command list.
 rm -rf ~/.drift-semantic
 ```
 
-Remove the `# --- drift-semantic ---` block from your shell profile (`~/.bashrc`, `~/.zshrc`).
+Remove the `# --- drift-semantic ---` block from your shell profile (`~/.bashrc` or `~/.zshrc`).
 
 ## Documentation
 

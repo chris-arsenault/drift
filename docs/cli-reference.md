@@ -1,6 +1,6 @@
 # CLI Reference
 
-drift-semantic has two entry points: `drift` (wrapper CLI for management) and `cli.sh` (pipeline orchestrator). The wrapper passes unrecognized commands through to `cli.sh`, so in practice you always use `drift`.
+drift has two entry points: `drift` (wrapper CLI for management) and `cli.sh` (pipeline orchestrator). The wrapper passes unrecognized commands through to `cli.sh`, so in practice you always use `drift`.
 
 ## Management Commands
 
@@ -46,6 +46,8 @@ drift callgraph                   # Stage 2d: call graph vectors
 drift depcontext                  # Stage 2e: dependency context
 drift score                       # Stage 3: pairwise similarity
 drift cluster                     # Stage 4: community detection
+drift css-extract --project <path> # Stage 1b: CSS rule extraction
+drift css-score                   # Stage 3b: CSS pairwise similarity + clustering
 drift report                      # Stage 6: generate report + manifest
 ```
 

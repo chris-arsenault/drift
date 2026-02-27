@@ -30,7 +30,7 @@ genuine semantic duplication.
 
 ## Prerequisites
 
-1. Install drift-semantic: `curl -fsSL https://raw.githubusercontent.com/chris-arsenault/drift/main/install.sh | bash`
+1. Install drift: `curl -fsSL https://raw.githubusercontent.com/chris-arsenault/drift/main/install.sh | bash`
    This sets `DRIFT_SEMANTIC=~/.drift-semantic` in your shell profile. Or set it manually
    to wherever you cloned the repo. The tool auto-installs its own dependencies on first run.
 2. Install the skill to this project: `drift install-skill` (or it's already done if you're reading this)
@@ -40,7 +40,7 @@ genuine semantic duplication.
 
 ## Method A: Tool-Assisted (Preferred)
 
-Use this method when `drift-semantic` is available. It provides deterministic structural
+Use this method when the drift CLI is available. It provides deterministic structural
 analysis that you then verify semantically.
 
 ### Phase 0: Pipeline Health Check
@@ -79,7 +79,9 @@ This runs the full pipeline:
 7. **Embed** — TF-IDF embeddings of purpose statements (if available from Phase 3)
 8. **Score** — pairwise similarity across all units using 13 signals
 9. **Cluster** — graph-based community detection over similarity matrix
-10. **Report** — preliminary report with structural clusters
+10. **CSS extract** — parse `.css` files, fingerprint rules, link to components
+11. **CSS score** — pairwise CSS similarity and clustering
+12. **Report** — preliminary report with structural clusters and CSS findings
 
 **Error recovery:** If `drift run` fails partway through, run individual stages to isolate
 the problem and salvage partial results:
@@ -94,6 +96,8 @@ bash "$DRIFT_SEMANTIC/cli.sh" callgraph                # Needs code-units.json
 bash "$DRIFT_SEMANTIC/cli.sh" depcontext               # Needs code-units.json
 bash "$DRIFT_SEMANTIC/cli.sh" score                    # Needs fingerprints
 bash "$DRIFT_SEMANTIC/cli.sh" cluster                  # Needs scores
+bash "$DRIFT_SEMANTIC/cli.sh" css-extract --project .  # CSS extraction (needs code-units.json)
+bash "$DRIFT_SEMANTIC/cli.sh" css-score                # CSS scoring + clustering
 bash "$DRIFT_SEMANTIC/cli.sh" report                   # Needs clusters
 ```
 
