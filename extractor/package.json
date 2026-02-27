@@ -15,6 +15,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.3",
+    "@types/node": "^25.3.2",
     "eslint": "^9.39.3",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-sonarjs": "^3.0.7",
