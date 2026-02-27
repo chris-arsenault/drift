@@ -407,13 +407,12 @@ Inspection:
   inspect unit <id>         Show unit metadata
   inspect similar <id>      Find similar units
   inspect cluster <id>      Show cluster details
-  inspect graph <id>        Show neighborhood graph
   inspect consumers <id>    Show who imports this unit
-  inspect callers <id>      Show who calls this unit
+  inspect callers <id>      Show what this unit calls
 
 Search:
-  search calls <id>             Find all callers of a unit
-  search called-by <id>         Find all callees of a unit
+  search calls <id>             Find all units that the given unit calls
+  search called-by <id>         Find all units that call the given unit
   search co-occurs-with <id>    Find co-occurring imports
   search type-like <id>         Find type-similar units
 

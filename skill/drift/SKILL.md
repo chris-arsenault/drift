@@ -35,43 +35,104 @@ Each phase runs ONLY that phase and stops. `/drift` (no args) runs all phases se
 
 ## Phase: Audit
 
-Run all three audit methodologies sequentially, compiling a unified manifest.
+Run the semantic pipeline first, then all three audit methodologies, compiling a unified manifest.
 
-### Step 1: Structural Audit
+### Step 0: Library Sync
 
-Read `$DRIFT_SEMANTIC/skill/drift-audit/SKILL.md` and follow its complete methodology:
+If `.drift-audit/config.json` exists and `mode` is `"online"`, sync the library:
+
+```bash
+drift library sync
+```
+
+Skip if the config file does not exist or mode is `"offline"`.
+
+### Step 1: Run Semantic Pipeline
+
+Run the full pipeline before any manual analysis. This is mandatory — it produces the
+structural artifacts (fingerprints, similarity scores, clusters) that inform all three
+audit phases.
+
+```bash
+PROJECT_ROOT="<path>"
+bash "$DRIFT_SEMANTIC/cli.sh" run --project "$PROJECT_ROOT"
+```
+
+**Verification:** After the pipeline completes, confirm the artifacts exist:
+
+```bash
+ls .drift-audit/semantic/code-units.json .drift-audit/semantic/clusters.json
+```
+
+- Both exist → pipeline succeeded, proceed to Step 2.
+- Only `code-units.json` exists → downstream stages failed. Run individual stages to
+  isolate the failure:
+
+```bash
+bash "$DRIFT_SEMANTIC/cli.sh" fingerprint
+bash "$DRIFT_SEMANTIC/cli.sh" typesig
+bash "$DRIFT_SEMANTIC/cli.sh" callgraph
+bash "$DRIFT_SEMANTIC/cli.sh" depcontext
+bash "$DRIFT_SEMANTIC/cli.sh" score
+bash "$DRIFT_SEMANTIC/cli.sh" cluster
+bash "$DRIFT_SEMANTIC/cli.sh" css-extract --project "$PROJECT_ROOT"
+bash "$DRIFT_SEMANTIC/cli.sh" css-score
+bash "$DRIFT_SEMANTIC/cli.sh" report
+```
+
+- Neither file exists → extraction failed. Check `drift version` and diagnose before
+  proceeding. Do not skip the pipeline and fall back to manual-only analysis.
+
+### Step 2: Structural Audit
+
+Read `$DRIFT_SEMANTIC/skill/drift-audit/SKILL.md` for the analysis methodology, then:
 - Run `bash "$DRIFT_SEMANTIC/scripts/discover.sh" "$PROJECT_ROOT"` for raw inventory
 - Perform intelligent analysis (read source files, identify drift areas)
+- Use the pipeline's `code-units.json` to cross-reference extracted units
 - Write findings to `.drift-audit/drift-manifest.json` and `.drift-audit/drift-report.md`
 
 All structural entries should have `"type": "structural"` (or no type field — structural
 is the default since drift-audit predates the type system).
 
-### Step 2: Behavioral Audit
+### Step 3: Behavioral Audit
 
-Read `$DRIFT_SEMANTIC/skill/drift-audit-ux/SKILL.md` and follow its complete methodology:
+Read `$DRIFT_SEMANTIC/skill/drift-audit-ux/SKILL.md` for the analysis methodology, then:
 - Work through the 7 behavioral domain checklist
 - Read implementation code to understand actual behavior
 - Build behavior matrices per domain
 - Append findings to the existing manifest with `"type": "behavioral"`
 - Append `## Behavioral Findings` section to drift-report.md
 
-### Step 3: Semantic Audit
+### Step 4: Semantic Audit
 
-Read `$DRIFT_SEMANTIC/skill/drift-audit-semantic/SKILL.md` and follow its complete methodology:
-- Run the pipeline health check (Phase 0) before attempting the full pipeline
-- Run `bash "$DRIFT_SEMANTIC/cli.sh" run --project .` for tool-assisted analysis
-- **Generate purpose statements** (Phase 3) — this is mandatory, not optional. Purpose
-  statements are your primary semantic contribution and the pipeline's highest-value input.
-- If the pipeline fails, fall back to individual stages. If only extraction works, purpose
-  statements alone still enable meaningful semantic analysis.
-- Verify clusters by reading source code — include code excerpts in every finding
+The pipeline already ran in Step 1. Read `$DRIFT_SEMANTIC/skill/drift-audit-semantic/SKILL.md`
+for the cluster verification and purpose statement methodology (start from Phase 1).
+
+- Verify pipeline clusters by reading source code — include code excerpts in every finding
+- **Generate purpose statements** — this is mandatory, not optional. Purpose statements
+  are your primary semantic contribution and the pipeline's highest-value input.
 - Append findings to manifest with `"type": "semantic"`
 - Append `## Semantic Findings` section to drift-report.md
 - **Zero semantic findings is a failure state**, not a valid result for any non-trivial
   codebase. If the pipeline produced no clusters, diagnose why and produce manual findings.
 
-### Step 4: Update Summary
+### Step 5: Re-run Pipeline with Purpose Statements
+
+After writing purpose statements, re-run the downstream stages to incorporate semantic
+embeddings into the similarity scoring:
+
+```bash
+bash "$DRIFT_SEMANTIC/cli.sh" ingest-purposes --file .drift-audit/semantic/purpose-statements.json
+bash "$DRIFT_SEMANTIC/cli.sh" embed
+bash "$DRIFT_SEMANTIC/cli.sh" score
+bash "$DRIFT_SEMANTIC/cli.sh" cluster
+bash "$DRIFT_SEMANTIC/cli.sh" report
+```
+
+Review the updated clusters — purpose-enhanced scoring may surface new semantic findings
+that structural signals alone missed.
+
+### Step 6: Update Summary
 
 After all three audits, recompute the manifest's `summary` field:
 
@@ -95,7 +156,7 @@ After all three audits, recompute the manifest's `summary` field:
 }
 ```
 
-### Step 5: Quality Gate
+### Step 7: Quality Gate
 
 Before presenting findings to the user, validate that every finding has sufficient evidence.
 This prevents shallow, generic output that could apply to any codebase.
@@ -347,11 +408,13 @@ Update `drift-manifest.json` status to `completed`.
 
 When invoked with no phase argument, run all phases in sequence:
 
-1. **Audit** — discover all drift
+1. **Audit** — library sync (if online), run semantic pipeline, discover all drift
 2. **Plan** — prioritize and present to user for approval/reordering
 3. **Unify** — resolve all planned areas autonomously
 4. **Guard** — generate enforcement for all unified areas
-5. **Summary** — present full pipeline results
+5. **Library Publish** — if `.drift-audit/config.json` has `"mode": "online"`, run
+   `drift library publish` to share guard artifacts to the centralized library
+6. **Summary** — present full pipeline results
 
 The plan phase is the one human checkpoint in the full pipeline. After the user
 approves the plan, unify and guard run autonomously with a summary at the end.
