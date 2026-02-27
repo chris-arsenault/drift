@@ -28,6 +28,143 @@ OUTPUT_DIR="${DRIFT_OUTPUT_DIR:-.drift-audit/semantic}"
 MANIFEST_PATH="${DRIFT_MANIFEST:-.drift-audit/drift-manifest.json}"
 
 # ---------------------------------------------------------------------------
+# Python discovery
+# ---------------------------------------------------------------------------
+#
+# Finds a working python3 (>=3.10) that can create venvs. Searches:
+#   1. Existing venv in pipeline/.venv (already set up)
+#   2. System python3 (if it has venv support)
+#   3. uv-managed python (uv python find / uv venv)
+#   4. pyenv-managed python
+#   5. conda python
+#   6. Versioned binaries (python3.14, python3.13, ... python3.10)
+#   7. mise/asdf shims
+#
+# Sets PYTHON3 to the discovered interpreter path. Caches the result for the
+# session in _DRIFT_PYTHON3 to avoid re-discovery on every command.
+
+_DRIFT_PYTHON3=""
+
+_python_version_ok() {
+    # Check if a python binary exists and is >= 3.10
+    local py="$1"
+    "$py" -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" 2>/dev/null
+}
+
+_python_can_venv() {
+    # Check if a python binary can actually create a working venv with pip.
+    # On Debian/Ubuntu minimal installs, `import venv` succeeds but
+    # `python3 -m venv` fails because ensurepip is missing. The error
+    # message is printed by a subprocess, so 2>/dev/null doesn't catch it.
+    # We check for ensurepip directly instead.
+    local py="$1"
+    "$py" -c "import ensurepip" 2>/dev/null
+}
+
+discover_python() {
+    # Return cached result if available
+    if [[ -n "$_DRIFT_PYTHON3" ]]; then
+        PYTHON3="$_DRIFT_PYTHON3"
+        return 0
+    fi
+
+    local VENV_DIR="$PIPELINE_DIR/.venv"
+
+    # 1. Existing venv — fastest path
+    if [[ -x "$VENV_DIR/bin/python3" ]] && _python_version_ok "$VENV_DIR/bin/python3"; then
+        PYTHON3="$VENV_DIR/bin/python3"
+        _DRIFT_PYTHON3="$PYTHON3"
+        return 0
+    fi
+
+    # 2. System python3
+    if command -v python3 &>/dev/null && _python_version_ok python3 && _python_can_venv python3; then
+        PYTHON3="python3"
+        _DRIFT_PYTHON3="$PYTHON3"
+        return 0
+    fi
+
+    # 3. uv-managed python
+    if command -v uv &>/dev/null; then
+        local uv_py
+        uv_py="$(uv python find '>=3.10' 2>/dev/null)" || true
+        if [[ -n "$uv_py" ]] && _python_version_ok "$uv_py"; then
+            # uv python may not have venv module, but uv can create venvs directly
+            PYTHON3="$uv_py"
+            _DRIFT_PYTHON3="$PYTHON3"
+            _DRIFT_HAS_UV=1
+            return 0
+        fi
+    fi
+
+    # 4. pyenv
+    if command -v pyenv &>/dev/null; then
+        local pyenv_root
+        pyenv_root="$(pyenv root 2>/dev/null)"
+        if [[ -n "$pyenv_root" ]]; then
+            for ver_dir in "$pyenv_root"/versions/3.*/bin/python3; do
+                if [[ -x "$ver_dir" ]] && _python_version_ok "$ver_dir"; then
+                    PYTHON3="$ver_dir"
+                    _DRIFT_PYTHON3="$PYTHON3"
+                    return 0
+                fi
+            done
+        fi
+    fi
+
+    # 5. conda
+    if [[ -n "${CONDA_PREFIX:-}" ]] && [[ -x "$CONDA_PREFIX/bin/python3" ]]; then
+        if _python_version_ok "$CONDA_PREFIX/bin/python3"; then
+            PYTHON3="$CONDA_PREFIX/bin/python3"
+            _DRIFT_PYTHON3="$PYTHON3"
+            return 0
+        fi
+    fi
+
+    # 6. Versioned binaries (try newest first)
+    local ver
+    for ver in 14 13 12 11 10; do
+        if command -v "python3.$ver" &>/dev/null && _python_version_ok "python3.$ver"; then
+            if _python_can_venv "python3.$ver"; then
+                PYTHON3="python3.$ver"
+                _DRIFT_PYTHON3="$PYTHON3"
+                return 0
+            fi
+        fi
+    done
+
+    # 7. mise/asdf shims
+    for shimdir in "$HOME/.local/share/mise/shims" "$HOME/.asdf/shims"; do
+        if [[ -x "$shimdir/python3" ]] && _python_version_ok "$shimdir/python3"; then
+            PYTHON3="$shimdir/python3"
+            _DRIFT_PYTHON3="$PYTHON3"
+            return 0
+        fi
+    done
+
+    # 8. Last resort: system python3 without venv (uv can still create venvs)
+    if command -v python3 &>/dev/null && _python_version_ok python3; then
+        if command -v uv &>/dev/null; then
+            PYTHON3="python3"
+            _DRIFT_PYTHON3="$PYTHON3"
+            _DRIFT_HAS_UV=1
+            return 0
+        fi
+    fi
+
+    echo "ERROR: Python 3.10+ is required but not found." >&2
+    echo "" >&2
+    echo "Install Python via one of:" >&2
+    echo "  uv:    curl -LsSf https://astral.sh/uv/install.sh | sh && uv python install 3.12" >&2
+    echo "  apt:   sudo apt install python3 python3-venv" >&2
+    echo "  brew:  brew install python@3.12" >&2
+    echo "  pyenv: pyenv install 3.12" >&2
+    exit 1
+}
+
+_DRIFT_HAS_UV=0
+
+# ---------------------------------------------------------------------------
 # Dependency checks
 # ---------------------------------------------------------------------------
 
@@ -39,10 +176,7 @@ check_node() {
 }
 
 check_python() {
-    python3 -c "import sys; assert sys.version_info >= (3, 10)" 2>/dev/null || {
-        echo "ERROR: Python 3.10+ is required." >&2
-        exit 1
-    }
+    discover_python
 }
 
 ensure_node_deps() {
@@ -53,19 +187,34 @@ ensure_node_deps() {
 }
 
 ensure_python_deps() {
+    discover_python
+
     VENV_DIR="$PIPELINE_DIR/.venv"
     if [ -d "$VENV_DIR" ] && [ -f "$VENV_DIR/bin/python3" ]; then
         export PATH="$VENV_DIR/bin:$PATH"
-        if ! "$VENV_DIR/bin/python3" -c "import drift_semantic" 2>/dev/null; then
+        PYTHON3="$VENV_DIR/bin/python3"
+        if ! "$PYTHON3" -c "import drift_semantic" 2>/dev/null; then
             echo "Installing pipeline into venv..." >&2
             "$VENV_DIR/bin/pip" install -e "$PIPELINE_DIR" --quiet 2>&1 | tail -1 >&2
         fi
     else
         echo "Creating Python venv for pipeline..." >&2
-        python3 -m venv "$VENV_DIR"
+        if [[ "$_DRIFT_HAS_UV" -eq 1 ]] || ! _python_can_venv "$PYTHON3"; then
+            # Use uv to create the venv (handles missing venv module)
+            if command -v uv &>/dev/null; then
+                uv venv "$VENV_DIR" --python ">=3.10" --seed 2>&1 | tail -1 >&2
+            else
+                echo "ERROR: Python's venv module is not available and uv is not installed." >&2
+                echo "Fix with: sudo apt install python3-venv  OR  install uv" >&2
+                exit 1
+            fi
+        else
+            "$PYTHON3" -m venv "$VENV_DIR"
+        fi
         "$VENV_DIR/bin/pip" install --upgrade pip --quiet 2>&1 | tail -1 >&2
         "$VENV_DIR/bin/pip" install -e "$PIPELINE_DIR" --quiet 2>&1 | tail -1 >&2
         export PATH="$VENV_DIR/bin:$PATH"
+        PYTHON3="$VENV_DIR/bin/python3"
     fi
 }
 
@@ -101,7 +250,7 @@ run_pipeline() {
     shift
     check_python
     ensure_python_deps
-    python3 -m drift_semantic "$cmd" --output-dir "$OUTPUT_DIR" "$@"
+    "$PYTHON3" -m drift_semantic "$cmd" --output-dir "$OUTPUT_DIR" "$@"
 }
 
 # ---------------------------------------------------------------------------
@@ -153,6 +302,14 @@ case "$COMMAND" in
         echo "=== Stage 2e: DEPENDENCY CONTEXT ===" >&2
         run_pipeline depcontext
 
+        # Stage 2b: Embed purpose statements (if available)
+        if [[ -f "$OUTPUT_DIR/purpose-statements.json" ]]; then
+            echo "=== Stage 2b: EMBED ===" >&2
+            run_pipeline embed
+        else
+            echo "  Skipping embed (no purpose-statements.json yet)." >&2
+        fi
+
         # Stage 3: Pairwise similarity scoring
         echo "" >&2
         echo "=== Stage 3: SCORE ===" >&2
@@ -161,6 +318,14 @@ case "$COMMAND" in
         # Stage 4: Community detection / clustering
         echo "=== Stage 4: CLUSTER ===" >&2
         run_pipeline cluster
+
+        # CSS pipeline: extract, score, cluster
+        echo "" >&2
+        echo "=== Stage 1b: CSS EXTRACT ===" >&2
+        run_pipeline css-extract --project "$PROJECT_PATH"
+
+        echo "=== Stage 3b: CSS SCORE ===" >&2
+        run_pipeline css-score
 
         # Stage 6: Report generation
         echo "" >&2
@@ -199,7 +364,7 @@ case "$COMMAND" in
         run_ast_grep "$PROJECT_PATH"
         ;;
 
-    fingerprint|typesig|callgraph|depcontext|embed|score|cluster|report)
+    fingerprint|typesig|callgraph|depcontext|embed|score|cluster|report|css-extract|css-score)
         run_pipeline "$COMMAND" "$@"
         ;;
 
@@ -227,6 +392,8 @@ Pipeline commands:
   depcontext       Stage 2e: Compute dependency context
   score            Stage 3: Pairwise similarity scoring
   cluster          Stage 4: Community detection
+  css-extract      Stage 1b: Extract CSS units from .css files
+  css-score        Stage 3b: Score and cluster CSS file pairs
   report           Stage 6: Generate report
 
 Optional:

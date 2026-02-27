@@ -59,10 +59,17 @@ Read `$DRIFT_SEMANTIC/skill/drift-audit-ux/SKILL.md` and follow its complete met
 ### Step 3: Semantic Audit
 
 Read `$DRIFT_SEMANTIC/skill/drift-audit-semantic/SKILL.md` and follow its complete methodology:
+- Run the pipeline health check (Phase 0) before attempting the full pipeline
 - Run `bash "$DRIFT_SEMANTIC/cli.sh" run --project .` for tool-assisted analysis
-- Verify clusters by reading source code
+- **Generate purpose statements** (Phase 3) — this is mandatory, not optional. Purpose
+  statements are your primary semantic contribution and the pipeline's highest-value input.
+- If the pipeline fails, fall back to individual stages. If only extraction works, purpose
+  statements alone still enable meaningful semantic analysis.
+- Verify clusters by reading source code — include code excerpts in every finding
 - Append findings to manifest with `"type": "semantic"`
 - Append `## Semantic Findings` section to drift-report.md
+- **Zero semantic findings is a failure state**, not a valid result for any non-trivial
+  codebase. If the pipeline produced no clusters, diagnose why and produce manual findings.
 
 ### Step 4: Update Summary
 
@@ -79,9 +86,44 @@ After all three audits, recompute the manifest's `summary` field:
     "structural": "<count>",
     "behavioral": "<count>",
     "semantic": "<count>"
+  },
+  "evidence_coverage": {
+    "high": "<count areas with code_excerpts + line ranges>",
+    "medium": "<count areas with file paths only>",
+    "low": "<count areas with observation only>"
   }
 }
 ```
+
+### Step 5: Quality Gate
+
+Before presenting findings to the user, validate that every finding has sufficient evidence.
+This prevents shallow, generic output that could apply to any codebase.
+
+**For each area in the manifest, verify:**
+
+1. **Code excerpts exist** — every variant must have at least one `code_excerpts` entry with
+   actual source code (not a description of code). If missing, go back and read the files.
+
+2. **File paths include line ranges** — `files` entries should be `path:startLine-endLine`,
+   not bare file paths. If missing, re-read the files and add line ranges.
+
+3. **Analysis has substance** — the `analysis` field must be 3+ sentences covering: why the
+   drift exists, concrete tradeoffs, and what convergence looks like. If it's 1-2 generic
+   sentences, rewrite it.
+
+4. **Recommendations are actionable** — the `recommendation` field must include a concrete
+   target (API sketch, component interface, migration path). "Extract a shared component"
+   is not actionable. "Extract `ModalShell({ onClose, escapeClose?, scrollLock?, children })`
+   into `packages/shared-components/`" is actionable.
+
+5. **Semantic findings have purpose statements** — every semantic finding must reference
+   purpose statements that demonstrate functional equivalence. If the semantic pipeline
+   produced zero findings, that's a pipeline failure, not an absence of semantic drift.
+   Fall back to manual analysis.
+
+**If any finding fails the quality gate**, fix it before presenting to the user. The
+quality gate is non-negotiable — it's what distinguishes a useful audit from busywork.
 
 ### Re-Audit Behavior
 

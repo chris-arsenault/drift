@@ -43,6 +43,25 @@ genuine semantic duplication.
 Use this method when `drift-semantic` is available. It provides deterministic structural
 analysis that you then verify semantically.
 
+### Phase 0: Pipeline Health Check
+
+Before running the full pipeline, verify the environment can support it:
+
+```bash
+# Check that the CLI can find Python and create venvs
+drift version 2>&1 && echo "CLI OK"
+
+# Try a quick extract to verify the full toolchain works
+bash "$DRIFT_SEMANTIC/cli.sh" extract --project . 2>&1 | tail -5
+```
+
+If extraction succeeds, proceed with Phase 1. If it fails:
+- **Node.js not found:** Tell the user to install Node.js (required for ts-morph extraction)
+- **Python venv error:** The CLI auto-discovers Python via uv, pyenv, conda, and system
+  paths. If it still fails, tell the user to run `uv python install 3.12` or
+  `sudo apt install python3-venv`.
+- **Any other error:** Run individual stages to isolate the failure (see Phase 1 error recovery).
+
 ### Phase 1: Run the CLI Tool
 
 ```bash
@@ -57,9 +76,30 @@ This runs the full pipeline:
 4. **Type signatures** — normalized type hashes with identifiers stripped
 5. **Call graph vectors** — callee sets, call sequences, chain patterns
 6. **Dependency context** — consumer profiles, co-occurrence, neighborhood hashes
-7. **Score** — pairwise similarity across all units using 12+ signals
-8. **Cluster** — graph-based community detection over similarity matrix
-9. **Report** — preliminary report with structural clusters
+7. **Embed** — TF-IDF embeddings of purpose statements (if available from Phase 3)
+8. **Score** — pairwise similarity across all units using 13 signals
+9. **Cluster** — graph-based community detection over similarity matrix
+10. **Report** — preliminary report with structural clusters
+
+**Error recovery:** If `drift run` fails partway through, run individual stages to isolate
+the problem and salvage partial results:
+
+```bash
+# Run stages individually — each one that succeeds produces usable artifacts
+bash "$DRIFT_SEMANTIC/cli.sh" extract --project .     # MUST succeed — everything depends on this
+bash "$DRIFT_SEMANTIC/cli.sh" ast-grep --project .     # Optional — skips gracefully if sg not found
+bash "$DRIFT_SEMANTIC/cli.sh" fingerprint              # Needs code-units.json
+bash "$DRIFT_SEMANTIC/cli.sh" typesig                  # Needs code-units.json
+bash "$DRIFT_SEMANTIC/cli.sh" callgraph                # Needs code-units.json
+bash "$DRIFT_SEMANTIC/cli.sh" depcontext               # Needs code-units.json
+bash "$DRIFT_SEMANTIC/cli.sh" score                    # Needs fingerprints
+bash "$DRIFT_SEMANTIC/cli.sh" cluster                  # Needs scores
+bash "$DRIFT_SEMANTIC/cli.sh" report                   # Needs clusters
+```
+
+If only extraction succeeds, you still have `code-units.json` — proceed to Phase 3
+(Purpose Statements) which doesn't require the downstream stages and is the highest-value
+step you can do regardless of pipeline health.
 
 Output goes to `.drift-audit/semantic/`. Key artifacts:
 - `code-units.json` — all extracted units with full metadata
@@ -96,7 +136,24 @@ Write your verdicts to a findings file:
     "featureGaps": ["ButtonHeader has tooltip, ToolBar doesn't"],
     "consolidationComplexity": "LOW",
     "consolidationReasoning": "Shared ActionBar({ items }) would replace all three",
-    "consumerImpact": "12 components import these across 3 apps"
+    "consumerImpact": "12 components import these across 3 apps",
+    "code_excerpts": [
+      {
+        "unitId": "src/components/ButtonHeader.tsx::ButtonHeader",
+        "file": "src/components/ButtonHeader.tsx",
+        "start_line": 15,
+        "end_line": 28,
+        "snippet": "return (\n  <div className=\"button-header\">\n    {items.map(item => (\n      <button key={item.id} onClick={item.action}>\n        <Icon name={item.icon} />\n        {item.tooltip && <Tooltip>{item.tooltip}</Tooltip>}\n      </button>\n    ))}\n  </div>\n);"
+      },
+      {
+        "unitId": "src/components/ToolBar.tsx::ToolBar",
+        "file": "src/components/ToolBar.tsx",
+        "start_line": 22,
+        "end_line": 33,
+        "snippet": "return (\n  <div className=\"toolbar-row\">\n    {actions.map(a => (\n      <IconButton key={a.key} icon={a.icon} onClick={a.handler} />\n    ))}\n  </div>\n);"
+      }
+    ],
+    "target_interface": "ActionBar({ items: { id, icon, label, action, tooltip? }[], orientation?: 'horizontal' | 'vertical' })"
   }
 ]
 ```
@@ -108,35 +165,74 @@ bash "$DRIFT_SEMANTIC/cli.sh" ingest-findings --file .drift-audit/semantic/findi
 bash "$DRIFT_SEMANTIC/cli.sh" report
 ```
 
-### Phase 3: Purpose Statements
+### Phase 3: Purpose Statements (CRITICAL — This Is Your Primary Contribution)
 
-Generate purpose statements for the extracted code units. This is the core semantic
-analysis step — it captures what each unit DOES in natural language, enabling the
-pipeline to compare units by meaning rather than just structure.
+This is the most important phase of the semantic audit. The pipeline detects structural
+similarity — units that LOOK alike. Purpose statements detect semantic similarity — units
+that DO the same thing regardless of how they look. **You must complete this phase even if
+the pipeline partially failed.** If only `code-units.json` exists, that's enough to proceed.
 
-1. Read `.drift-audit/semantic/code-units.json` to get the list of extracted units
-2. For each unit (or at minimum the top candidates from initial clustering), read the
-   source code and write a one-sentence description of its functional purpose
-3. Save as `purpose-statements.json`:
-   ```json
-   [
-     { "unitId": "src/components/ButtonHeader.tsx::ButtonHeader", "purpose": "Renders a horizontal bar of contextual action buttons for the current view" },
-     { "unitId": "src/components/ToolBar.tsx::ToolBar", "purpose": "Renders a horizontal toolbar of action buttons with icons" }
-   ]
-   ```
-4. Ingest and re-run the pipeline with semantic embeddings:
-   ```bash
-   bash "$DRIFT_SEMANTIC/cli.sh" ingest-purposes --file .drift-audit/semantic/purpose-statements.json
-   bash "$DRIFT_SEMANTIC/cli.sh" embed
-   bash "$DRIFT_SEMANTIC/cli.sh" score
-   bash "$DRIFT_SEMANTIC/cli.sh" cluster
-   bash "$DRIFT_SEMANTIC/cli.sh" report
-   ```
+**Why this matters:** Two components named `ButtonHeader` and `GridActions` with completely
+different JSX trees, different hooks, and different imports might both serve the purpose
+"renders a row of contextual action buttons for the current entity." Without purpose
+statements, the pipeline can't detect this. With them, it can.
+
+#### Step 1: Read the extracted units
+
+```bash
+# How many units were extracted?
+python3 -c "import json; d=json.load(open('.drift-audit/semantic/code-units.json')); print(len(d), 'units')"
+```
+
+Read `code-units.json`. For large codebases (500+ units), prioritize:
+- Components (highest semantic duplication risk)
+- Hooks (second highest)
+- Functions that access data stores or external APIs
+- Skip type aliases, constants, and enums (rarely semantically duplicated)
+
+#### Step 2: Write purpose statements
+
+For each unit, read its source code and write a one-sentence description of its **functional
+purpose** — what it does for the user or system, not how it's implemented.
+
+**Good purpose statements** describe the WHAT and WHY:
+- "Renders a horizontal bar of contextual action buttons for the currently selected entity"
+- "Loads world metadata from IndexedDB and returns it with loading/error state"
+- "Manages a queue of background AI generation tasks with progress tracking"
+
+**Bad purpose statements** describe the HOW (implementation details):
+- "A React component that uses useState and maps over an array" (too generic)
+- "Exports a function" (useless)
+- "Handles click events" (what does clicking DO?)
+
+Write purpose statements in batches. For a 500-unit codebase, aim for at least 200
+statements covering all components and hooks. Save as `purpose-statements.json`:
+
+```json
+[
+  { "unitId": "src/components/ButtonHeader.tsx::ButtonHeader", "purpose": "Renders a horizontal bar of contextual action buttons for the current view" },
+  { "unitId": "src/components/ToolBar.tsx::ToolBar", "purpose": "Renders a horizontal toolbar of action buttons with icons for entity operations" },
+  { "unitId": "src/hooks/useWorldData.ts::useWorldData", "purpose": "Loads world metadata from IndexedDB and returns it with loading and error state" }
+]
+```
+
+#### Step 3: Ingest and re-run with semantic embeddings
+
+```bash
+bash "$DRIFT_SEMANTIC/cli.sh" ingest-purposes --file .drift-audit/semantic/purpose-statements.json
+bash "$DRIFT_SEMANTIC/cli.sh" embed       # Built-in TF-IDF, no external services
+bash "$DRIFT_SEMANTIC/cli.sh" score
+bash "$DRIFT_SEMANTIC/cli.sh" cluster
+bash "$DRIFT_SEMANTIC/cli.sh" report
+```
 
 The embed step uses built-in TF-IDF to compare purpose statements — no external
-services required. The re-scored clusters now include semantic similarity as a signal,
+services required. The re-scored clusters now include semantic similarity as a 13th signal,
 making clusters much more precise for catching functionally identical code with
 different names.
+
+If scoring/clustering fails, you still have the purpose statements. Use them in Phase 2
+(verification) — manually group units with similar purposes and assess them as clusters.
 
 ### Phase 4: Targeted Exploration
 
@@ -158,14 +254,34 @@ bash "$DRIFT_SEMANTIC/cli.sh" inspect cluster cluster-003
 
 ### Phase 5: Present and Output
 
-Read `semantic-drift-report.md` and present findings to the user:
+Read `semantic-drift-report.md` and present findings to the user. Each semantic finding
+must include concrete evidence — not just cluster IDs and scores.
+
+**For each semantic finding, include:**
+1. The **functional role** these units share (from your purpose statements)
+2. **Code excerpts** (5-15 lines each) from at least 2 cluster members showing what they do
+3. **Specific shared behaviors** — name the actual functions/hooks/patterns they have in common
+4. **Specific differences** — which are accidental (naming, API shape) vs meaningful (features)
+5. **Consolidation sketch** — a concrete interface for the unified replacement:
+   ```tsx
+   // Proposed shared component
+   interface ActionBarProps {
+     items: ActionItem[];
+     orientation?: 'horizontal' | 'vertical';
+     showTooltips?: boolean;  // Feature gap: only ButtonHeader has this
+   }
+   ```
+
+Present findings in priority order:
 1. Highest consolidation-potential clusters (DUPLICATE verdict, easy wins)
 2. Clusters with the most implementations (widest duplication)
 3. Infrastructure-level duplication (data loading, worker patterns)
 4. Cases where you're unsure
 
 Write findings to `.drift-audit/drift-manifest.json` as entries with `"type": "semantic"`.
-The report command handles this automatically.
+Each entry must include `code_excerpts`, `implementation_details`, and `evidence_quality`
+fields (same schema as structural findings). The report command handles manifest integration
+automatically, but you must ensure the findings.json verdicts contain sufficient evidence.
 
 ---
 

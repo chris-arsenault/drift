@@ -51,9 +51,16 @@ Work through these domains sequentially. For each domain:
 1. **Find candidates** — use glob/grep with the heuristic patterns listed below
 2. **Read representative files** — read 2-5 files per app that handle the concern.
    You MUST read actual implementation code, not just imports or exports.
-3. **Fill a behavior matrix** — for each file, catalog which behaviors are present/absent
-4. **Identify drift** — where do similar components handle the same concern differently?
-5. **Rate impact** — how many files affected, how user-visible is the inconsistency?
+3. **Fill a behavior matrix** — for each file, catalog which behaviors are present/absent.
+   **Include an Implementation column** showing the concrete code pattern (1-line signature
+   or technique), not just yes/no. See matrix format below.
+4. **Extract code excerpts** — for each distinct behavioral variant, include 5-10 lines of
+   actual implementation code showing the pattern. This is what distinguishes a useful audit
+   from a surface-level checklist.
+5. **Identify drift** — where do similar components handle the same concern differently?
+6. **Rate impact** — how many files affected, how user-visible is the inconsistency?
+7. **Estimate complexity** — for missing behaviors, note whether adding them would be
+   trivial (1-2 lines), moderate (new handler/hook), or significant (architectural change).
 
 Skip domains that don't apply to the project (e.g., skip "notification patterns" if the
 project has no toast system).
@@ -77,13 +84,31 @@ project has no toast system).
 - Files with `modal-overlay` or `dialog-overlay` in CSS classes
 - Files with `position: fixed` overlay patterns
 
-**Output:** A matrix like:
+**Output:** A behavior matrix with implementation details:
 
 | Modal | Overlay Close | Escape | Focus Trap | Scroll Lock | Close Btn |
-|-------|:---:|:---:|:---:|:---:|:---:|
-| ImageModal | yes | yes | no | no | yes |
-| QuickCheckModal | yes | no | no | no | yes |
-| BulkHistorianModal | no | no | no | no | no (footer only) |
+|-------|:---|:---|:---|:---|:---|
+| ImageModal | `onMouseDown={e => e.target === e.currentTarget && onClose()}` | `useEffect` keydown listener | — | — | yes |
+| QuickCheckModal | `onClick` on overlay div (bug: drag triggers close) | — | — | — | yes |
+| BulkHistorianModal | — (intentional: prevents accidental loss) | — | — | — | footer Cancel button |
+
+For each behavioral variant, include a code excerpt showing the actual implementation:
+
+```tsx
+// src/components/ImageModal.tsx:28-35 — mouseDown guard pattern
+<div className="imod-overlay"
+  onMouseDown={(e) => {
+    if (e.target === e.currentTarget) onClose();
+  }}>
+
+// src/components/QuickCheckModal.tsx:42 — simple onClick (drift)
+<div className="qcm-overlay" onClick={onClose}>
+```
+
+**Missing behaviors** should include complexity estimates:
+- Escape key support: **trivial** — add `useEffect` with keydown listener (~5 lines)
+- Focus trapping: **moderate** — needs tabIndex management or focus-trap library
+- Body scroll lock: **trivial** — add `overflow: hidden` to body on mount (~3 lines)
 
 ### Domain 2: Shared Component Adoption
 
@@ -222,15 +247,35 @@ section. If running standalone, create `behavioral-drift-report.md`.
 **Behavior Matrix:**
 
 | Component | Behavior A | Behavior B | Behavior C |
-|-----------|:---:|:---:|:---:|
-| Component1 | yes | no | partial |
-| Component2 | no | yes | no |
+|-----------|:---|:---|:---|
+| Component1 | `handler code pattern` | — | `partial impl pattern` |
+| Component2 | — | `handler code pattern` | — |
 
-**Most common pattern:** [which variant most files follow]
+**Implementation Patterns:**
 
-**Outliers:** [which files deviate and how]
+Pattern A (N files): [1-line description]
+```tsx
+// src/path/Component1.tsx:45-52 — actual code showing the pattern
+[5-10 lines of real code]
+```
 
-**Analysis:** [your assessment — is this drift or intentional variation?]
+Pattern B (N files): [1-line description]
+```tsx
+// src/path/Component2.tsx:30-38 — actual code showing the different approach
+[5-10 lines of real code]
+```
+
+**Most common pattern:** [which variant most files follow, with file count]
+
+**Outliers:** [which files deviate and how — name specific files and line numbers]
+
+**Missing behaviors — complexity estimates:**
+- [Behavior X]: [trivial/moderate/significant] — [what implementation would require]
+
+**Analysis:** [3+ sentences: (a) Is this drift or intentional variation? Cite specific
+evidence for your assessment. (b) What's the user-visible impact of the inconsistency?
+(c) If recommending unification, sketch the target API — e.g., "ModalShell needs an
+`escapeClose` prop (default true) and a `scrollLock` prop (default true)".]
 ```
 
 ### drift-manifest.json
@@ -249,24 +294,65 @@ manifest schema with an additional `"type": "behavioral"` field:
   "variants": [
     {
       "name": "overlay-click-plus-escape",
-      "description": "Closes on overlay click AND Escape key",
+      "description": "Closes on overlay click (mouseDown guard) AND Escape key via useEffect listener",
       "file_count": 1,
-      "files": ["src/components/ImageModal.jsx"],
-      "sample_file": "src/components/ImageModal.jsx"
+      "files": ["src/components/ImageModal.jsx:28-55"],
+      "sample_file": "src/components/ImageModal.jsx",
+      "code_excerpts": [
+        {
+          "file": "src/components/ImageModal.jsx",
+          "start_line": 28,
+          "end_line": 35,
+          "snippet": "<div onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>"
+        }
+      ],
+      "implementation_details": "Uses mouseDown guard pattern to prevent drag-from-modal triggering close. Escape handler is a useEffect keydown listener that checks for key === 'Escape'. No focus trapping or scroll lock."
     }
   ],
   "behavior_matrix": {
-    "ImageModal": { "overlay_close": true, "escape_close": true, "focus_trap": false },
-    "QuickCheckModal": { "overlay_close": true, "escape_close": false, "focus_trap": false }
+    "ImageModal": {
+      "overlay_close": "mouseDown guard: e.target === e.currentTarget",
+      "escape_close": "useEffect keydown listener",
+      "focus_trap": false
+    },
+    "QuickCheckModal": {
+      "overlay_close": "simple onClick (bug: drag triggers close)",
+      "escape_close": false,
+      "focus_trap": false
+    }
   },
-  "analysis": "...",
-  "recommendation": "...",
+  "missing_behavior_complexity": {
+    "focus_trap": "moderate — needs tabIndex management or focus-trap library",
+    "scroll_lock": "trivial — overflow:hidden on body mount/unmount"
+  },
+  "analysis": "3+ sentences: what the behavioral drift is, user-visible impact, recommended target API",
+  "recommendation": "Concrete target API sketch, e.g., ModalShell({ escapeClose?: boolean, scrollLock?: boolean })",
+  "evidence_quality": "high",
   "status": "pending"
 }
 ```
 
 The `behavior_matrix` field is specific to behavioral findings. drift-unify and drift-guard
 can ignore it — the standard `variants` and `files` fields are sufficient for those skills.
+
+## Self-Review Before Output
+
+Before writing the report and manifest, review every behavioral finding:
+
+1. **Implementation column test:** Does every row in your behavior matrices show the actual
+   code pattern (handler signature, event type, CSS technique), not just yes/no? If you have
+   bare yes/no entries, go back and read the implementation — replace with the code pattern.
+
+2. **Code excerpt test:** Does every distinct behavioral variant have a code excerpt showing
+   the actual implementation? A matrix without code excerpts is a checklist, not an audit.
+
+3. **Complexity estimate test:** For every missing behavior you flagged, did you estimate
+   implementation complexity (trivial/moderate/significant) with a brief justification?
+
+4. **Analysis depth test:** Is your analysis 3+ sentences explaining (a) whether this is
+   drift vs intentional, (b) user-visible impact, and (c) recommended target API?
+
+Fix any findings that fail these tests before writing output.
 
 ## Investigation Guidance
 

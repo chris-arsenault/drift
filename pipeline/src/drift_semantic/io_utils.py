@@ -35,6 +35,9 @@ def read_artifact(name: str, output_dir: Path) -> dict:
             "semantic-embeddings.json": "embed",
             "similarity-matrix.json": "score",
             "clusters.json": "cluster",
+            "css-units.json": "css-extract",
+            "css-similarity.json": "css-score",
+            "css-clusters.json": "css-score",
             "purpose-statements.json": "ingest-purposes (written by Claude)",
             "findings.json": "ingest-findings (written by Claude)",
         }

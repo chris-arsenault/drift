@@ -341,14 +341,14 @@ drift_library_publish() {
     _require_python3
     local config_file
     config_file="$(_find_project_config)"
-    exec python3 "$DRIFT_HOME/scripts/library-publish.py" "$config_file"
+    exec "$_DRIFT_PY" "$DRIFT_HOME/scripts/library-publish.py" "$config_file"
 }
 
 drift_library_sync() {
     _require_python3
     local config_file
     config_file="$(_find_project_config)"
-    exec python3 "$DRIFT_HOME/scripts/library-sync.py" "$config_file"
+    exec "$_DRIFT_PY" "$DRIFT_HOME/scripts/library-sync.py" "$config_file"
 }
 
 drift_library_list() {
@@ -358,7 +358,7 @@ drift_library_list() {
     # Try project config first, fall back to default library path
     config_file="$(_find_project_config 2>/dev/null || echo "")"
     if [[ -n "$config_file" ]]; then
-        exec python3 "$DRIFT_HOME/scripts/library-status.py" --list "$config_file"
+        exec "$_DRIFT_PY" "$DRIFT_HOME/scripts/library-status.py" --list "$config_file"
     else
         lib_path="${1:-$HOME/.drift/library}"
         if [[ ! -f "$lib_path/library.json" ]]; then
@@ -366,7 +366,7 @@ drift_library_list() {
             error "Run 'drift library init' first."
             exit 1
         fi
-        exec python3 "$DRIFT_HOME/scripts/library-status.py" --list --library "$lib_path"
+        exec "$_DRIFT_PY" "$DRIFT_HOME/scripts/library-status.py" --list --library "$lib_path"
     fi
 }
 
@@ -374,7 +374,69 @@ drift_library_status() {
     _require_python3
     local config_file
     config_file="$(_find_project_config)"
-    exec python3 "$DRIFT_HOME/scripts/library-status.py" "$config_file"
+    exec "$_DRIFT_PY" "$DRIFT_HOME/scripts/library-status.py" "$config_file"
+}
+
+# ---------------------------------------------------------------------------
+# Python discovery (shared with cli.sh)
+# ---------------------------------------------------------------------------
+
+# Source the discovery function from cli.sh so both entry points use the same
+# logic. cli.sh defines discover_python() which sets $PYTHON3.
+_drift_discover_python() {
+    if [[ -n "${_DRIFT_PY:-}" ]]; then
+        return 0
+    fi
+    # We only need a python3 for JSON manipulation — the full venv setup
+    # isn't needed. Try a simpler discovery chain.
+    local py
+
+    # 1. System python3
+    if command -v python3 &>/dev/null; then
+        py="python3"
+    # 2. uv-managed
+    elif command -v uv &>/dev/null; then
+        py="$(uv python find '>=3.10' 2>/dev/null)" || true
+    # 3. Versioned binaries
+    else
+        local ver
+        for ver in 14 13 12 11 10; do
+            if command -v "python3.$ver" &>/dev/null; then
+                py="python3.$ver"
+                break
+            fi
+        done
+    fi
+
+    # 4. pyenv
+    if [[ -z "${py:-}" ]] && command -v pyenv &>/dev/null; then
+        local pyenv_root
+        pyenv_root="$(pyenv root 2>/dev/null)"
+        for ver_dir in "$pyenv_root"/versions/3.*/bin/python3; do
+            if [[ -x "$ver_dir" ]]; then
+                py="$ver_dir"
+                break
+            fi
+        done
+    fi
+
+    # 5. mise/asdf shims
+    if [[ -z "${py:-}" ]]; then
+        for shimdir in "$HOME/.local/share/mise/shims" "$HOME/.asdf/shims"; do
+            if [[ -x "$shimdir/python3" ]]; then
+                py="$shimdir/python3"
+                break
+            fi
+        done
+    fi
+
+    if [[ -z "${py:-}" ]]; then
+        error "python3 is required but was not found."
+        error "Install via: uv python install 3.12, apt install python3, or brew install python@3.12"
+        exit 1
+    fi
+
+    _DRIFT_PY="$py"
 }
 
 # ---------------------------------------------------------------------------
@@ -382,7 +444,8 @@ drift_library_status() {
 # ---------------------------------------------------------------------------
 
 _read_config_mode() {
-    python3 -c "
+    _drift_discover_python
+    "$_DRIFT_PY" -c "
 import json, sys
 with open(sys.argv[1]) as f:
     print(json.load(f).get('mode', 'offline'))
@@ -390,7 +453,8 @@ with open(sys.argv[1]) as f:
 }
 
 _set_config_mode() {
-    python3 -c "
+    _drift_discover_python
+    "$_DRIFT_PY" -c "
 import json, sys
 path, mode = sys.argv[1], sys.argv[2]
 with open(path) as f:
@@ -403,10 +467,7 @@ with open(path, 'w') as f:
 }
 
 _require_python3() {
-    if ! command -v python3 &>/dev/null; then
-        error "python3 is required for library commands but was not found."
-        exit 1
-    fi
+    _drift_discover_python
 }
 
 _find_project_config() {

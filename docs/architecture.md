@@ -23,6 +23,8 @@ Output: `code-units.json`
 
 Processes extracted units through fingerprinting, scoring, clustering, and reporting stages. See [Pipeline Stages](#pipeline-stages) below.
 
+Python 3.10+ is auto-discovered at runtime — the CLI searches (in order): existing venv, system `python3`, uv-managed python, pyenv, conda, versioned binaries (`python3.14` down to `python3.10`), and mise/asdf shims. If the discovered python lacks the `venv` module (common on Debian/Ubuntu minimal installs), the CLI falls back to `uv venv` for virtual environment creation.
+
 ### ast-grep/ — YAML rules + bash runner
 
 Structural pattern matching as an additive scoring signal. Scans for common code shapes:
@@ -42,7 +44,9 @@ extract → fingerprint → typesig → callgraph → depcontext
                                                     ↓
                 Claude writes purpose statements → embed
                                                     ↓
-                                              score → cluster → report
+                                              score → cluster ──┐
+                                                                ├→ report
+                                    css-extract → css-score ────┘
 ```
 
 ### Stage 1: Extract
@@ -106,6 +110,29 @@ Graph-based community detection using NetworkX:
 4. Enrich each cluster: avg similarity, signal breakdown, directory spread, kind mix, shared callees, consumer overlap
 5. Rank by `memberCount * avgSimilarity * directorySpread * kindBonus`
 
+### Stage 1b: CSS Extract
+
+Regex-based CSS parser. Walks the project for `.css` files, parses rules with selectors and declarations, computes per-rule fingerprints and per-file aggregates. Links CSS files to importing JS/TS components via `code-units.json`.
+
+Per-rule: `propertyValueHash` (exact match), `propertySetHash` (value-agnostic match).
+
+Per-file: `selectorPrefixes` (BEM), `customPropertyDeclarations/References`, `propertyFrequency`, `categoryProfile` (7-element vector: layout, spacing, sizing, typography, visual, positioning, animation).
+
+### Stage 3b: CSS Score & Cluster
+
+Pairwise CSS similarity across 6 signals:
+
+| Signal | Weight | Method | Catches |
+|--------|--------|--------|---------|
+| ruleExactMatch | 0.30 | Dice on propertyValueHash multisets | Exact copy-paste, renamed selectors |
+| ruleSetMatch | 0.25 | Dice on propertySetHash multisets | Same props, different values/vars |
+| propertyFrequency | 0.20 | Cosine on property-name frequency vectors | Files using same properties |
+| categoryProfile | 0.10 | Cosine on category vectors | Files styling same kinds of things |
+| customPropertyVocab | 0.10 | Jaccard on custom-property reference sets | Files consuming same design tokens |
+| selectorPrefixOverlap | 0.05 | Jaccard on prefix sets | Naming convention similarity |
+
+Threshold: 0.40. Clustering reuses the same NetworkX community detection as Stage 4.
+
 ### Stage 5: Verify (Claude Code skill, not a tool stage)
 
 Claude reads cluster members' source code and assesses semantic equivalence. Writes `findings.json` with verdicts: DUPLICATE, OVERLAPPING, RELATED, or FALSE_POSITIVE.
@@ -161,6 +188,9 @@ All artifacts are written to `$DRIFT_OUTPUT_DIR` (default: `.drift-audit/semanti
 | `structural-patterns.json` | ast-grep | Pattern tags per unit (optional) |
 | `similarity-matrix.json` | Score | Scored pairs above threshold |
 | `clusters.json` | Cluster | Ranked communities with enrichment |
+| `css-units.json` | CSS Extract | Parsed CSS rules, fingerprints, file aggregates |
+| `css-similarity.json` | CSS Score | Scored CSS file pairs above threshold |
+| `css-clusters.json` | CSS Score | Clustered CSS file groups |
 | `semantic-drift-report.md` | Report | Human-readable findings |
 | `drift-manifest.json` | Report | Structured finding entries |
 | `dependency-atlas.json` | Report | Graph for visualization |

@@ -98,9 +98,10 @@ For each potential drift area you identify:
 1. **Name it descriptively.** Not "modal drift" if the project doesn't use that term —
    use whatever vocabulary the codebase uses.
 
-2. **Read representative files.** Don't just rely on grep matches. Read 2-3 files per
-   variant to understand the full pattern — the state management, error handling, types,
-   composition approach, and edge case handling.
+2. **Read representative files thoroughly.** Don't just rely on grep matches. Read 2-3
+   files per variant to understand the full pattern — the state management, error handling,
+   types, composition approach, and edge case handling. **You must extract code excerpts**
+   (5-15 lines each) that demonstrate the concrete implementation pattern for each variant.
 
 3. **Count variants and adoption.** How many distinct approaches exist? How many files
    use each? Which is most common?
@@ -120,6 +121,28 @@ For each potential drift area you identify:
 6. **Note the tradeoffs of each variant.** Don't just say "Variant A is better."
    Explain what each variant does well and poorly. The user has context you don't —
    maybe the "worse" pattern exists because of a constraint you can't see.
+
+### Evidence Requirements
+
+Every finding MUST include concrete evidence from the codebase. Findings without evidence
+are not actionable — they read as generic observations that could apply to any project.
+
+**Per variant, you must include:**
+- At least one **code excerpt** (5-15 lines) showing the actual implementation pattern
+- **File paths with line ranges** (e.g., `src/components/Modal.tsx:45-62`), not just file names
+- **Specific identifiers** — name the actual functions, components, CSS classes, variables
+
+**Per finding, your analysis must include:**
+- At least 3 sentences covering: (a) what the pattern is and why it diverged, (b) the
+  concrete tradeoff between variants, (c) what convergence would look like
+- A **concrete recommendation** — not "extract a shared component" but "extract a
+  `ModalShell({ onClose, title, children })` component into `packages/shared/`" with
+  enough specificity that a developer could start implementation
+- If recommending a shared abstraction, sketch the **target interface** (props/params/return)
+
+**Specificity check:** Before writing each finding, ask yourself: "Could this description
+apply to any codebase without modification?" If yes, it's too generic — rewrite it with
+project-specific details, file paths, and code excerpts.
 
 ### Drift Domain Discovery
 
@@ -181,17 +204,24 @@ Drift areas found: [count]
 **Variants found:** N | **Impact:** HIGH/MED/LOW | **Files affected:** N
 
 **Variant A: "[descriptive name]" (N files)**
-- How it works: [brief description of the approach]
-- Representative files: [2-3 file paths]
-- Strengths: [what this variant does well]
-- Weaknesses: [where it falls short]
+- How it works: [CONCRETE description — name the actual functions, hooks, components]
+- Representative files: [2-3 file paths WITH line ranges, e.g., src/Modal.tsx:45-62]
+- Code excerpt: [5-15 lines showing the actual implementation pattern]
+  ```tsx
+  // src/Modal.tsx:45-62 — the actual overlay close handler pattern
+  [paste the real code, not a summary]
+  ```
+- Strengths: [what this variant does well, with specific examples]
+- Weaknesses: [where it falls short, referencing specific missing behaviors]
 
 **Variant B: "[descriptive name]" (N files)**
-[...]
+[same level of evidence as Variant A — code excerpt required]
 
-**Analysis:** [Your assessment of the tradeoffs. Do NOT dictate a canonical choice —
-present the tradeoffs clearly so the user can decide. You can express a recommendation
-with reasoning, but frame it as a suggestion.]
+**Analysis:** [3+ sentences covering: (a) WHY these variants diverged — scaffolding
+artifact, organic evolution, or intentional design? (b) Concrete tradeoffs between
+variants — what would be lost by choosing A over B and vice versa? (c) What convergence
+looks like — sketch the target API/interface if recommending unification. Do NOT dictate
+a canonical choice — present tradeoffs clearly so the user can decide.]
 
 [...repeat for each drift area...]
 
@@ -230,21 +260,50 @@ let the consuming skills interpret it:
       "variants": [
         {
           "name": "descriptive-variant-name",
-          "description": "How this variant works",
+          "description": "How this variant works — name specific functions, hooks, components",
           "file_count": 0,
-          "files": ["src/path/to/file.ts"],
-          "sample_file": "src/path/to/best-example.ts"
+          "files": ["src/path/to/file.ts:10-45"],
+          "sample_file": "src/path/to/best-example.ts",
+          "code_excerpts": [
+            {
+              "file": "src/path/to/file.ts",
+              "start_line": 10,
+              "end_line": 25,
+              "snippet": "const handleClose = (e) => {\n  if (e.target === e.currentTarget) onClose();\n};"
+            }
+          ],
+          "implementation_details": "3+ sentences: what this variant does, its API surface, its key behaviors and limitations"
         }
       ],
-      "analysis": "Your tradeoff assessment",
-      "recommendation": "Your suggested canonical (if you have one) and why",
+      "analysis": "3+ sentences: why this drift exists, concrete tradeoffs between variants, what convergence looks like",
+      "recommendation": "Concrete: target API sketch (params/props/return type), which files change first, estimated blast radius",
+      "evidence_quality": "high|medium|low",
       "status": "pending"
     }
   ]
 }
 ```
 
-### Phase 4: Present and Discuss
+### Phase 4: Self-Review
+
+Before presenting to the user, review every finding against these criteria:
+
+1. **Project-specific test:** Could this finding's description apply to any codebase without
+   modification? If yes, rewrite it with this project's actual file paths, component names,
+   function names, and code excerpts.
+
+2. **Evidence test:** Does every variant have at least one code excerpt? If not, go back
+   and read the files — add the excerpts.
+
+3. **Analysis depth test:** Is the analysis field 3+ sentences? Does it explain WHY the
+   drift exists (not just WHAT it is)? Does it sketch what convergence looks like?
+
+4. **Recommendation specificity test:** Does the recommendation include a target API or
+   interface? Would a developer know where to start implementing it?
+
+Fix any findings that fail these tests before moving to Phase 5.
+
+### Phase 5: Present and Discuss
 
 Walk the user through findings conversationally. Focus on:
 - The 3-5 highest-impact areas

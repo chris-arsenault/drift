@@ -162,11 +162,78 @@ def _render_verified_clusters(
     return lines
 
 
+def _render_css_cluster_section(cluster: dict) -> list[str]:
+    """Render a single CSS cluster as markdown lines."""
+    lines: list[str] = []
+    cid = cluster.get("id", "unknown")
+    members = cluster.get("members", [])
+    avg_sim = cluster.get("avgSimilarity", 0)
+    dir_spread = cluster.get("directorySpread", 0)
+    signals = cluster.get("signalBreakdown", {})
+    linked = cluster.get("linkedComponents", [])
+    shared_props = cluster.get("sharedCustomProperties", [])
+
+    # Title from file basenames
+    import os
+
+    member_names = [os.path.basename(m) for m in members[:4]]
+    if len(members) > 4:
+        member_names.append(f"+{len(members) - 4} more")
+    title = ", ".join(member_names)
+
+    lines.append(f"### {cid}: {title}")
+    lines.append(
+        f"**Files:** {len(members)} | "
+        f"**Avg Similarity:** {avg_sim:.2f} | "
+        f"**Spread:** {dir_spread} directories"
+    )
+    if signals:
+        top_sigs = sorted(signals.items(), key=lambda x: x[1], reverse=True)
+        sig_str = ", ".join(f"{n}:{v:.2f}" for n, v in top_sigs[:3] if v > 0)
+        if sig_str:
+            lines.append(f"**Top Signals:** {sig_str}")
+    lines.append("")
+
+    # File table
+    lines.append("| File | Linked Components |")
+    lines.append("|------|-------------------|")
+    # Build per-file linked components from cluster data
+    for fpath in members:
+        fname = _shorten_path(fpath)
+        lines.append(f"| {fname} | |")
+    lines.append("")
+
+    if linked:
+        lines.append(f"**Linked Components:** {', '.join(linked[:10])}")
+        if len(linked) > 10:
+            lines.append(f"  ...and {len(linked) - 10} more")
+        lines.append("")
+
+    if shared_props:
+        lines.append(f"**Shared Custom Properties:** `{', '.join(shared_props[:10])}`")
+        lines.append("")
+
+    return lines
+
+
+def _render_css_section(css_clusters: list[dict]) -> list[str]:
+    """Render the CSS Style Duplication section."""
+    lines: list[str] = []
+    lines.append("## CSS Style Duplication")
+    lines.append("")
+    lines.append(f"Found {len(css_clusters)} clusters of similar CSS files.")
+    lines.append("")
+    for cluster in css_clusters:
+        lines.extend(_render_css_cluster_section(cluster))
+    return lines
+
+
 def _generate_markdown(
     clusters: list[dict],
     units_by_id: dict[str, dict],
     findings_by_cluster: dict[str, dict],
     unit_count: int,
+    css_clusters: list[dict] | None = None,
 ) -> str:
     """Generate the semantic-drift-report.md content."""
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -179,6 +246,8 @@ def _generate_markdown(
     verified_count = sum(1 for c in clusters if c.get("id") in findings_by_cluster)
     if findings_by_cluster:
         lines.append(f"Verified clusters: {verified_count}")
+    if css_clusters:
+        lines.append(f"CSS clusters: {len(css_clusters)}")
     lines.append("")
 
     if findings_by_cluster:
@@ -193,6 +262,11 @@ def _generate_markdown(
         lines.append("")
         for cluster in clusters:
             lines.extend(_render_cluster_section(cluster, units_by_id, None))
+
+    # CSS section
+    if css_clusters:
+        lines.append("")
+        lines.extend(_render_css_section(css_clusters))
 
     return "\n".join(lines)
 
@@ -304,13 +378,58 @@ def _build_manifest_entry(
     }
 
 
+def _build_css_manifest_entry(cluster: dict) -> dict:
+    """Build a manifest area entry for a CSS cluster."""
+    import os
+
+    members = cluster.get("members", [])
+    avg_sim = cluster.get("avgSimilarity", 0)
+    linked = cluster.get("linkedComponents", [])
+    shared_props = cluster.get("sharedCustomProperties", [])
+
+    variants = [
+        {
+            "name": os.path.basename(fp),
+            "description": f"CSS file with {avg_sim:.0%} avg similarity to cluster",
+            "file_count": 1,
+            "files": [fp],
+            "sample_file": fp,
+        }
+        for fp in members
+    ]
+
+    description = f"CSS files with similar style rules (avg similarity: {avg_sim:.2f})"
+    if shared_props:
+        description += f". Shared custom properties: {', '.join(shared_props[:5])}"
+
+    return {
+        "id": f"css-{cluster['id']}",
+        "name": f"CSS Duplication: {', '.join(os.path.basename(m) for m in members[:3])}",
+        "type": "css",
+        "description": description,
+        "impact": "HIGH" if avg_sim >= 0.7 else "MEDIUM" if avg_sim >= 0.5 else "LOW",
+        "total_files": len(members),
+        "variants": variants,
+        "linked_components": linked,
+        "shared_custom_properties": shared_props,
+        "analysis": (
+            f"Avg similarity: {avg_sim:.2f}, "
+            f"spread: {cluster.get('directorySpread', 0)} dirs, "
+            f"linked to {len(linked)} components"
+        ),
+        "recommendation": "Review for consolidation into shared CSS modules or design tokens.",
+        "status": "pending",
+    }
+
+
 def _update_manifest(
     clusters: list[dict],
     findings_by_cluster: dict[str, dict],
     units_by_id: dict[str, dict],
     manifest_path: Path | None,
+    css_clusters: list[dict] | None = None,
 ) -> None:
-    """Write or update the drift manifest with semantic entries."""
+    """Write or update the drift manifest with semantic and CSS entries."""
     new_entries: list[dict] = []
     actionable_verdicts = {"DUPLICATE", "OVERLAPPING"}
 
@@ -321,7 +440,13 @@ def _update_manifest(
         if finding and verdict in actionable_verdicts:
             new_entries.append(_build_manifest_entry(cluster, finding, units_by_id))
 
-    if not new_entries:
+    # CSS entries (all clusters are actionable — no verification step)
+    css_entries: list[dict] = []
+    if css_clusters:
+        for cluster in css_clusters:
+            css_entries.append(_build_css_manifest_entry(cluster))
+
+    if not new_entries and not css_entries:
         return
 
     if manifest_path is None:
@@ -339,17 +464,22 @@ def _update_manifest(
     if not isinstance(manifest, dict) or "areas" not in manifest:
         manifest = {"areas": []}
 
-    # Remove existing semantic entries
-    manifest["areas"] = [a for a in manifest["areas"] if a.get("type") != "semantic"]
+    # Remove existing semantic and CSS entries
+    manifest["areas"] = [
+        a for a in manifest["areas"]
+        if a.get("type") not in ("semantic", "css")
+    ]
 
-    # Append new semantic entries
+    # Append new entries
     manifest["areas"].extend(new_entries)
+    manifest["areas"].extend(css_entries)
 
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     with open(manifest_path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)
+    total = len(new_entries) + len(css_entries)
     print(
-        f"  Manifest updated: {len(new_entries)} semantic entries -> {manifest_path}",
+        f"  Manifest updated: {len(new_entries)} semantic + {len(css_entries)} CSS entries -> {manifest_path}",
         file=sys.stderr,
     )
 
@@ -389,8 +519,14 @@ def generate_report(output_dir: Path, manifest_path: Path | None = None) -> None
     if isinstance(raw_pairs, list):
         scored_pairs = raw_pairs
 
+    # Load CSS clusters (optional)
+    css_clusters: list[dict] = []
+    raw_css_clusters = _load_optional("css-clusters.json", output_dir)
+    if isinstance(raw_css_clusters, list):
+        css_clusters = raw_css_clusters
+
     # Generate markdown report
-    md = _generate_markdown(clusters, units_by_id, findings_by_cluster, len(units))
+    md = _generate_markdown(clusters, units_by_id, findings_by_cluster, len(units), css_clusters)
     report_path = output_dir / "semantic-drift-report.md"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     with open(report_path, "w", encoding="utf-8") as f:
@@ -406,4 +542,4 @@ def generate_report(output_dir: Path, manifest_path: Path | None = None) -> None
     )
 
     # Update drift manifest
-    _update_manifest(clusters, findings_by_cluster, units_by_id, manifest_path)
+    _update_manifest(clusters, findings_by_cluster, units_by_id, manifest_path, css_clusters)

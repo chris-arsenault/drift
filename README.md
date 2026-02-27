@@ -27,7 +27,7 @@ This installs six skills into `.claude/skills/` and configures your project's `.
 
 - **Claude Code** — the skills are the primary interface
 - **Node.js** — for the TypeScript extractor (used by semantic audit)
-- **Python 3.10+** — for the scoring pipeline and library management
+- **Python 3.10+** — for the scoring pipeline and library management. Auto-discovered from uv, pyenv, conda, system packages, mise/asdf, or versioned binaries. If your system python lacks `venv`, drift will use `uv` to create virtual environments.
 - **ast-grep** (`sg`) — optional, adds structural pattern matching
 
 Dependencies auto-install on first run. No API keys, no external services, no Docker.

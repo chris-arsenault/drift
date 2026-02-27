@@ -24,8 +24,9 @@ def cli() -> None:
 
 @cli.command()
 @_odir
+@click.option("--project", type=click.Path(exists=True), default=None, help="Project root (for CSS extraction).")
 @click.option("--threshold", type=float, default=0.35)
-def run(output_dir: str, threshold: float) -> None:
+def run(output_dir: str, project: str | None, threshold: float) -> None:
     """Run the full deterministic pipeline (all stages except extract)."""
     from .callgraph import run as cg
     from .cluster import compute_clusters
@@ -45,8 +46,18 @@ def run(output_dir: str, threshold: float) -> None:
         ("embed", lambda: embed_if_available(od)),
         ("score", lambda: compute_scores(od, threshold)),
         ("cluster", lambda: compute_clusters(od, threshold)),
-        ("report", lambda: generate_report(od)),
     ]
+
+    # CSS stages (only if --project is provided or css-units.json exists)
+    if project or (od / "css-units.json").exists():
+        from .css_extract import run as css_ext
+        from .css_score import run as css_sc
+
+        if project:
+            stages.append(("css-extract", lambda: css_ext(Path(project), od)))
+        stages.append(("css-score", lambda: css_sc(od)))
+
+    stages.append(("report", lambda: generate_report(od)))
     t_total = time.time()
     for name, fn in stages:
         click.echo(f"[{name}] Starting...", err=True)
@@ -101,6 +112,26 @@ def embed(output_dir: str, ollama_url: str | None, model: str) -> None:
     from .embed import embed_purposes
 
     _run_stage("embed", lambda: embed_purposes(Path(output_dir), ollama_url, model))
+
+
+@cli.command("css-extract")
+@_odir
+@click.option("--project", type=click.Path(exists=True), required=True, help="Project root to scan for CSS files.")
+def css_extract(output_dir: str, project: str) -> None:
+    """Extract CSS units from .css files."""
+    from .css_extract import run
+
+    _run_stage("css-extract", lambda: run(Path(project), Path(output_dir)))
+
+
+@cli.command("css-score")
+@_odir
+@click.option("--threshold", type=float, default=0.40)
+def css_score(output_dir: str, threshold: float) -> None:
+    """Score and cluster CSS file pairs."""
+    from .css_score import run
+
+    _run_stage("css-score", lambda: run(Path(output_dir), threshold))
 
 
 @cli.command()
