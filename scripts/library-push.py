@@ -42,6 +42,35 @@ TYPE_EXTENSIONS: dict[str, set[str]] = {
     "checklist": {".md"},
 }
 
+# ── Drift marker ─────────────────────────────────────────────────────────
+# Only files containing this marker are considered drift artifacts.
+# drift-guard inserts this when generating files.
+DRIFT_MARKER = "drift-generated"
+MARKER_PATTERNS: dict[str, str] = {
+    ".md": "<!-- drift-generated -->",
+    ".js": "// drift-generated",
+    ".cjs": "// drift-generated",
+    ".mjs": "// drift-generated",
+    ".ts": "// drift-generated",
+    ".py": "# drift-generated",
+    ".toml": "# drift-generated",
+    ".yml": "# drift-generated",
+    ".yaml": "# drift-generated",
+}
+
+
+def has_drift_marker(path: Path) -> bool:
+    """Check if a file contains the drift-generated marker."""
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            # Only check the first 5 lines for efficiency
+            for _, line in zip(range(5), f):
+                if DRIFT_MARKER in line:
+                    return True
+    except OSError:
+        pass
+    return False
+
 
 def sha256_file(path: Path) -> str:
     h = hashlib.sha256()
@@ -90,6 +119,8 @@ def collect_artifacts(
             if not entry.is_file():
                 continue
             if extensions and entry.suffix not in extensions:
+                continue
+            if not has_drift_marker(entry):
                 continue
 
             art_id = entry.stem

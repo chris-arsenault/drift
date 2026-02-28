@@ -63,6 +63,15 @@ For each unified drift area, generate the artifacts below. The exact content dep
 on what was unified — you determine the right rules and docs by reading the canonical patterns
 and the unification log.
 
+**Drift marker (required):** Every generated file must include a drift marker so the library
+tooling can distinguish drift artifacts from pre-existing project files:
+- Markdown files (`.md`): add `<!-- drift-generated -->` on the first line
+- JavaScript/TypeScript files (`.js`, `.ts`, etc.): add `// drift-generated` on the first line
+- YAML files: add `# drift-generated` on the first line
+
+The marker must appear within the first 5 lines of the file. Files without this marker
+will not be picked up by `drift library push`.
+
 ### 1. ESLint Rules
 
 Read `$DRIFT_SEMANTIC/skill/drift-guard/references/eslint-rule-patterns.md` for the mechanical

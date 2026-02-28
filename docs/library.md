@@ -74,9 +74,20 @@ This creates:
 
 Scans the project's artifact directories (from `sync` mappings in config) and copies new or changed files to the library.
 
+- **Only collects files with a drift marker** (see below) — pre-existing project files are ignored
 - Uses SHA-256 checksums to detect changes
 - Skips unchanged files
 - Derives artifact type from which sync mapping matched
+
+#### Drift marker
+
+Push only picks up files that contain a `drift-generated` marker within the first 5 lines. The drift-guard skill adds this automatically to all generated artifacts:
+
+- Markdown: `<!-- drift-generated -->`
+- JavaScript/TypeScript: `// drift-generated`
+- YAML: `# drift-generated`
+
+This prevents pre-existing project files (e.g. hand-written review guides) from leaking into the library.
 
 ### `drift library pull`
 
