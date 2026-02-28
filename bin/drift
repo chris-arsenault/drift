@@ -715,6 +715,9 @@ case "$COMMAND" in
         _require_python3
         exec "$_DRIFT_PY" "$DRIFT_HOME/scripts/plan-update.py" "$@"
         ;;
+    audit)
+        exec bash "$DRIFT_HOME/scripts/audit-orchestrate.sh" "$@"
+        ;;
     online)
         drift_online "$@"
         ;;

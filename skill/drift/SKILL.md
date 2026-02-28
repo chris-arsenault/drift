@@ -35,140 +35,47 @@ Each phase runs ONLY that phase and stops. `/drift` (no args) runs all phases se
 
 ## Phase: Audit
 
-Run the semantic pipeline first, then all three audit methodologies, compiling a unified manifest.
+Run the deterministic audit orchestrator. This script handles all six audit steps
+with artifact gates between them — the LLM cannot skip steps or collapse phases.
 
-### Step 0: Library Pull
-
-If `.drift-audit/config.json` exists and `mode` is `"online"`, pull from the library:
-
-```bash
-drift library pull
-```
-
-Skip if the config file does not exist or mode is `"offline"`.
-
-### Step 1: Run Semantic Pipeline
-
-Run the full pipeline before any manual analysis. This is mandatory — it produces the
-structural artifacts (fingerprints, similarity scores, clusters) that inform all three
-audit phases.
+### Run the Audit
 
 ```bash
-PROJECT_ROOT="<path>"
-bash "$DRIFT_SEMANTIC/cli.sh" run --project "$PROJECT_ROOT"
+drift audit "$PROJECT_ROOT"
 ```
 
-**Verification:** After the pipeline completes, confirm the artifacts exist:
+This runs 7 steps automatically:
+
+| Step | What | Type |
+|------|------|------|
+| 0 | Library pull (if online) | deterministic |
+| 1 | Semantic pipeline | deterministic |
+| 2 | Structural + behavioral audit | `claude -p` |
+| 3 | Semantic audit — cluster verification + purpose statements | `claude -p` |
+| 4 | Re-run pipeline with purpose statements | deterministic |
+| 5 | Review refined clusters + add semantic manifest entries | `claude -p` |
+| 6 | Validate manifest | deterministic |
+
+Each step has artifact gates that prevent the next step from starting until required
+files exist. If a step fails, re-run from that step:
 
 ```bash
-ls .drift-audit/semantic/code-units.json .drift-audit/semantic/clusters.json
+drift audit "$PROJECT_ROOT" --skip-to <step-number>
 ```
 
-- Both exist → pipeline succeeded, proceed to Step 2.
-- Only `code-units.json` exists → downstream stages failed. Run individual stages to
-  isolate the failure:
+Options:
+- `--model <model>` — override the Claude model for analytical steps
+- `--skip-to <N>` — resume from step N (verifies prior gates)
+- `--max-budget <USD>` — max budget per Claude call (default: 5.00)
+- `--verbose` — show full Claude output
+- `--dry-run` — print what would run without executing
 
-```bash
-bash "$DRIFT_SEMANTIC/cli.sh" fingerprint
-bash "$DRIFT_SEMANTIC/cli.sh" typesig
-bash "$DRIFT_SEMANTIC/cli.sh" callgraph
-bash "$DRIFT_SEMANTIC/cli.sh" depcontext
-bash "$DRIFT_SEMANTIC/cli.sh" score
-bash "$DRIFT_SEMANTIC/cli.sh" cluster
-bash "$DRIFT_SEMANTIC/cli.sh" css-extract --project "$PROJECT_ROOT"
-bash "$DRIFT_SEMANTIC/cli.sh" css-score
-bash "$DRIFT_SEMANTIC/cli.sh" report
-```
-
-- Neither file exists → extraction failed. Check `drift version` and diagnose before
-  proceeding. Do not skip the pipeline and fall back to manual-only analysis.
-
-### Step 2: Structural Audit
-
-Read `$DRIFT_SEMANTIC/skill/drift-audit/SKILL.md` for the analysis methodology, then:
-- Run `bash "$DRIFT_SEMANTIC/scripts/discover.sh" "$PROJECT_ROOT"` for raw inventory
-- Perform intelligent analysis (read source files, identify drift areas)
-- Use the pipeline's `code-units.json` to cross-reference extracted units
-- Write findings to `.drift-audit/drift-manifest.json` and `.drift-audit/drift-report.md`
-
-All structural entries should have `"type": "structural"` (or no type field — structural
-is the default since drift-audit predates the type system).
-
-### Step 3: Behavioral Audit
-
-Read `$DRIFT_SEMANTIC/skill/drift-audit-ux/SKILL.md` for the analysis methodology, then:
-- Work through the 7 behavioral domain checklist
-- Read implementation code to understand actual behavior
-- Build behavior matrices per domain
-- Append findings to the existing manifest with `"type": "behavioral"`
-- Append `## Behavioral Findings` section to drift-report.md
-
-### Step 4: Semantic Audit
-
-The pipeline already ran in Step 1. Read `$DRIFT_SEMANTIC/skill/drift-audit-semantic/SKILL.md`
-for the cluster verification and purpose statement methodology (start from Phase 1).
-
-- Verify pipeline clusters by reading source code — include code excerpts in every finding
-- **Generate purpose statements** — this is mandatory, not optional. Purpose statements
-  are your primary semantic contribution and the pipeline's highest-value input.
-- Append findings to manifest with `"type": "semantic"`
-- Append `## Semantic Findings` section to drift-report.md
-- **Zero semantic findings is a failure state**, not a valid result for any non-trivial
-  codebase. If the pipeline produced no clusters, diagnose why and produce manual findings.
-
-### Step 5: Re-run Pipeline with Purpose Statements
-
-After writing purpose statements, re-run the downstream stages to incorporate semantic
-embeddings into the similarity scoring:
-
-```bash
-bash "$DRIFT_SEMANTIC/cli.sh" ingest-purposes --file .drift-audit/semantic/purpose-statements.json
-bash "$DRIFT_SEMANTIC/cli.sh" embed
-bash "$DRIFT_SEMANTIC/cli.sh" score
-bash "$DRIFT_SEMANTIC/cli.sh" cluster
-bash "$DRIFT_SEMANTIC/cli.sh" report
-```
-
-Review the updated clusters — purpose-enhanced scoring may surface new semantic findings
-that structural signals alone missed.
-
-### Step 6: Update Summary and Run Quality Gate
-
-After all three audits, validate the manifest and recompute the summary:
-
-```bash
-drift validate "$PROJECT_ROOT" --fix-summary
-```
-
-This script:
-- Recomputes the summary (area counts by impact/type, unique files, evidence coverage)
-- Writes the corrected summary back to the manifest
-- Runs the quality gate on every area:
-  - `code_excerpts`: every variant has code excerpts with actual source
-  - `line_ranges`: file paths use `path:startLine-endLine` format
-  - `analysis_depth`: 3+ sentences of substantive analysis
-  - `recommendation_specific`: 50+ chars with concrete targets
-  - `semantic_purpose`: semantic findings reference purpose statements
-
-**If any area fails the quality gate**, the script exits non-zero and reports which checks
-failed. Fix the failing areas before presenting findings to the user. The quality gate is
-non-negotiable — it's what distinguishes a useful audit from busywork.
+Wait for the audit to complete before proceeding to the Plan phase.
 
 ### Re-Audit Behavior
 
-If the manifest already exists, first check for regressions in previously completed areas:
-
-```bash
-drift plan-update "$PROJECT_ROOT" --check-regressions
-```
-
-This exits non-zero if any completed plan entries have regressed in the manifest. Use
-`--json` for structured output including ADR violation flags.
-
-Then each audit phase compares against existing entries:
-- **New findings** are appended
-- **Previously found areas** are compared — note if drift has worsened, improved, or been resolved
-- **Completed areas** are checked for regression — if drift has returned, flag it prominently
+The orchestrator handles re-audits automatically. If the manifest already exists,
+Step 2 runs regression checking before the structural audit begins.
 
 #### ADR Violation Detection
 
@@ -182,16 +89,12 @@ When re-auditing finds drift in an area that was previously `completed`:
    - Flag it with `"severity": "violation"` in the finding — this is higher than HIGH
    - Include the ADR reference: "This area was resolved by ADR-NNNN but drift has
      returned, suggesting enforcement mechanisms have failed."
-   - Check which enforcement mechanism failed (run the ADR enforcement check from
-     the guard phase's Step 6 for this specific ADR)
    - ADR violations must appear at the **TOP** of re-audit findings, before any
      normal priority sorting
 
 3. **If no ADR exists for a regressed area:**
    - This is a normal regression, not a violation
    - Recommend adding guard artifacts to prevent future regression
-
-Present the combined findings when the audit phase is complete.
 
 ---
 
@@ -409,17 +312,16 @@ Do not proceed to library push with failing checks.
 
 When invoked with no phase argument, run all phases in sequence:
 
-1. **Audit** — library pull (if online), run semantic pipeline, discover all drift
-2. **Validate** — `drift validate "$PROJECT_ROOT" --fix-summary` (recompute summary + quality gate)
-3. **Plan** — `drift plan "$PROJECT_ROOT"` then present to user for approval/reordering
-4. **Unify** — resolve all planned areas autonomously
-5. **Guard** — generate enforcement for all unified areas
-6. **Finalize** — `drift plan-update "$PROJECT_ROOT" --finalize <id> --guard-artifacts ...` per area
-7. **Verify** — `drift verify "$PROJECT_ROOT"` (markers + ESLint + ADR checks). Fix any failures.
-8. **Library Push** — if `.drift-audit/config.json` has `"mode": "online"`, run
+1. **Audit** — `drift audit "$PROJECT_ROOT"` (deterministic orchestrator with gates)
+2. **Plan** — `drift plan "$PROJECT_ROOT"` then present to user for approval/reordering
+3. **Unify** — resolve all planned areas autonomously
+4. **Guard** — generate enforcement for all unified areas
+5. **Finalize** — `drift plan-update "$PROJECT_ROOT" --finalize <id> --guard-artifacts ...` per area
+6. **Verify** — `drift verify "$PROJECT_ROOT"` (markers + ESLint + ADR checks). Fix any failures.
+7. **Library Push** — if `.drift-audit/config.json` has `"mode": "online"`, run
    `drift library push` to share guard artifacts to the centralized library.
    Check the push output for skipped files — any skipped file is a bug to fix.
-9. **Summary** — present full pipeline results
+8. **Summary** — present full pipeline results
 
 The plan phase is the one human checkpoint in the full pipeline. After the user
 approves the plan, unify and guard run autonomously with a summary at the end.
