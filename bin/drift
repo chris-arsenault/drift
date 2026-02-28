@@ -9,6 +9,7 @@
 #   drift library          Manage the centralized drift artifact library
 #   drift online           Enable auto-push/pull (library ops run transparently)
 #   drift offline          Disable auto-push/pull (manual library push/pull)
+#   drift ui               Launch the drift dashboard
 #
 # All other commands pass through to cli.sh unchanged.
 
@@ -157,6 +158,10 @@ CFGEOF
 
     _refresh_claude_block "$target_dir" "$mode"
 
+    # -- Register project in dashboard registry ----------------------------
+
+    _register_project "$target_dir"
+
     # -- Suggest .gitignore entry ------------------------------------------
 
     local gitignore="$target_dir/.gitignore"
@@ -273,6 +278,27 @@ drift_offline() {
     _set_config_mode "$config_file" "offline"
     _refresh_claude_block "$project_root" "offline"
     success "Offline mode enabled — run 'drift library pull' and 'drift library push' manually."
+}
+
+drift_ui() {
+    local dash_dir="$DRIFT_HOME/dashboard"
+
+    if [[ ! -f "$dash_dir/package.json" ]]; then
+        error "Dashboard not found at $dash_dir"
+        exit 1
+    fi
+
+    # Ensure dependencies are installed
+    if [[ ! -d "$dash_dir/node_modules" ]]; then
+        info "Installing dashboard dependencies..."
+        (cd "$dash_dir" && npm install --no-fund --no-audit) || {
+            error "npm install failed"
+            exit 1
+        }
+    fi
+
+    info "Starting drift dashboard at http://localhost:4170"
+    cd "$dash_dir" && exec npm run dev
 }
 
 drift_library() {
@@ -469,6 +495,47 @@ _require_python3() {
     _drift_discover_python
 }
 
+_register_project() {
+    _drift_discover_python
+    local project_path="$1"
+    local registry_path="$HOME/.drift/registry.json"
+
+    "$_DRIFT_PY" -c "
+import json, os, sys
+from datetime import datetime, timezone
+
+project_path = sys.argv[1]
+registry_path = sys.argv[2]
+name = os.path.basename(project_path)
+
+os.makedirs(os.path.dirname(registry_path), exist_ok=True)
+
+registry = {'version': 1, 'projects': []}
+if os.path.isfile(registry_path):
+    try:
+        with open(registry_path) as f:
+            registry = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        pass
+
+# Skip if already registered
+if any(p.get('path') == project_path for p in registry.get('projects', [])):
+    sys.exit(0)
+
+registry.setdefault('projects', []).append({
+    'path': project_path,
+    'name': name,
+    'added': datetime.now(timezone.utc).isoformat(),
+    'lastRun': None
+})
+
+with open(registry_path, 'w') as f:
+    json.dump(registry, f, indent=2)
+    f.write('\n')
+" "$project_path" "$registry_path" 2>/dev/null && \
+        success "Registered project in drift dashboard" || true
+}
+
 _find_project_config() {
     # Walk up from cwd looking for .drift-audit/config.json
     local dir="$PWD"
@@ -509,6 +576,9 @@ case "$COMMAND" in
         ;;
     offline)
         drift_offline "$@"
+        ;;
+    ui|dashboard)
+        drift_ui "$@"
         ;;
     *)
         exec bash "$DRIFT_HOME/cli.sh" "$COMMAND" "$@"

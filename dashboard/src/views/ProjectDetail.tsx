@@ -1,7 +1,14 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useDriftStore } from "../data/store";
-import { StalenessBadge, ModeBadge, MetricCard } from "../components/SharedUI";
+import {
+  StalenessBadge,
+  ModeBadge,
+  MetricCard,
+  TypeBadge,
+  ImpactBadge,
+  PhaseBadge,
+} from "../components/SharedUI";
 
 export default function ProjectDetail() {
   const { name } = useParams<{ name: string }>();
@@ -10,9 +17,20 @@ export default function ProjectDetail() {
   const loading = useDriftStore((s) => s.loading);
   const error = useDriftStore((s) => s.error);
 
+  const [expandedAreas, setExpandedAreas] = useState<Set<string>>(new Set());
+
   useEffect(() => {
     if (name) fetchProject(name);
   }, [name, fetchProject]);
+
+  const toggleArea = (id: string) => {
+    setExpandedAreas((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   if (loading) {
     return (
@@ -41,6 +59,8 @@ export default function ProjectDetail() {
   }
 
   const summary = project.manifest?.summary;
+  const areas = project.manifest?.areas ?? [];
+  const plan = project.attackPlan?.plan ?? [];
 
   return (
     <>
@@ -77,22 +97,73 @@ export default function ProjectDetail() {
         </div>
       )}
 
-      {/* Full manifest table and attack plan will be added in Phase 3 */}
       <div className="panel">
         <div className="panel-header">
           <h3>Manifest Areas</h3>
-          {project.manifest?.areas && (
+          {areas.length > 0 && (
             <span className="panel-count">
-              {project.manifest.areas.length} areas
+              {areas.length} areas
             </span>
           )}
         </div>
-        <div className="panel-body">
-          {project.manifest?.areas && project.manifest.areas.length > 0 ? (
-            <p style={{ color: "var(--text-secondary)", fontSize: 13 }}>
-              {project.manifest.areas.length} drift areas detected.
-              Detailed table coming in Phase 3.
-            </p>
+        <div className="panel-body dense">
+          {areas.length > 0 ? (
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Type</th>
+                  <th>Impact</th>
+                  <th>Files</th>
+                </tr>
+              </thead>
+              <tbody>
+                {areas.map((area) => {
+                  const isExpanded = expandedAreas.has(area.id);
+                  return (
+                    <>
+                      <tr
+                        key={area.id}
+                        className="detail-row"
+                        onClick={() => toggleArea(area.id)}
+                      >
+                        <td className="td-name">{area.name}</td>
+                        <td><TypeBadge type={area.type} /></td>
+                        <td><ImpactBadge impact={area.impact} /></td>
+                        <td className="td-mono">{area.total_files}</td>
+                      </tr>
+                      {isExpanded && (
+                        <tr key={`${area.id}-detail`}>
+                          <td colSpan={4} style={{ padding: 0 }}>
+                            <div className="detail-expand">
+                              <div className="detail-label">Analysis</div>
+                              <div>{area.analysis}</div>
+                              <div className="detail-label">Recommendation</div>
+                              <div>{area.recommendation}</div>
+                              {area.variants.length > 0 && (
+                                <>
+                                  <div className="detail-label">Variants</div>
+                                  <div>
+                                    {area.variants.map((v) => (
+                                      <div key={v.name} style={{ marginBottom: "var(--sp-1)" }}>
+                                        <span style={{ fontWeight: 500 }}>{v.name}</span>
+                                        <span className="td-mono" style={{ marginLeft: "var(--sp-2)", color: "var(--text-secondary)" }}>
+                                          {v.file_count} files
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </>
+                  );
+                })}
+              </tbody>
+            </table>
           ) : (
             <div className="empty-state">No drift areas found.</div>
           )}
@@ -102,18 +173,47 @@ export default function ProjectDetail() {
       <div className="panel">
         <div className="panel-header">
           <h3>Attack Plan</h3>
-          {project.attackPlan?.plan && (
+          {plan.length > 0 && (
             <span className="panel-count">
-              {project.attackPlan.plan.length} items
+              {plan.length} items
             </span>
           )}
         </div>
         <div className="panel-body">
-          {project.attackPlan?.plan && project.attackPlan.plan.length > 0 ? (
-            <p style={{ color: "var(--text-secondary)", fontSize: 13 }}>
-              {project.attackPlan.plan.length} plan items.
-              Detailed view coming in Phase 3.
-            </p>
+          {plan.length > 0 ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)" }}>
+              {plan.map((item, i) => {
+                const entries = Object.entries(item).filter(
+                  ([k]) => k !== "phase"
+                );
+                return (
+                  <div
+                    key={i}
+                    style={{
+                      border: "1px solid var(--border-subtle)",
+                      borderRadius: "var(--radius-md)",
+                      padding: "var(--sp-4)",
+                      background: "var(--bg-elevated)",
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-3)", marginBottom: entries.length > 0 ? "var(--sp-2)" : 0 }}>
+                      {item.phase && <PhaseBadge phase={item.phase} />}
+                      <span style={{ fontWeight: 500 }}>Item {i + 1}</span>
+                    </div>
+                    {entries.length > 0 && (
+                      <div style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.6 }}>
+                        {entries.map(([key, value]) => (
+                          <div key={key}>
+                            <span style={{ fontWeight: 500, color: "var(--text-primary)" }}>{key}: </span>
+                            {typeof value === "string" ? value : JSON.stringify(value)}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           ) : (
             <div className="empty-state">No attack plan. Run <code>drift plan</code> to generate.</div>
           )}
