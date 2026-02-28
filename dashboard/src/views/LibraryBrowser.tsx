@@ -30,11 +30,11 @@ function GitStatusPanel() {
       <div className="panel">
         <div className="panel-header">
           <h3>Git</h3>
-          <span className="badge badge-neutral">Not initialized</span>
+          <span className="badge badge-neutral">No library</span>
         </div>
         <div className="panel-body">
           <span className="text-muted">
-            Run <code>drift library init</code> to initialize git.
+            Run <code>drift library init</code> to create the library.
           </span>
         </div>
       </div>

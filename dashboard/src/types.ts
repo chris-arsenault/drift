@@ -143,3 +143,36 @@ export interface LibraryGitStatus {
   ahead: number;
   behind: number;
 }
+
+// ── Sync Status ─────────────────────────────────────────────────────────
+
+export type SyncState =
+  | "in_sync"
+  | "library_newer"
+  | "project_newer"
+  | "not_synced"
+  | "excluded";
+
+export interface ArtifactSyncStatus {
+  id: string;
+  type: string;
+  filename: string;
+  source_project: string | null;
+  status: SyncState;
+  excluded: boolean;
+}
+
+export interface ProjectSyncSummary {
+  in_sync: number;
+  library_newer: number;
+  project_newer: number;
+  not_synced: number;
+  excluded: number;
+  total: number;
+}
+
+export interface ProjectSyncStatus {
+  project: string;
+  artifacts: ArtifactSyncStatus[];
+  summary: ProjectSyncSummary;
+}

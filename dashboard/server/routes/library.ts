@@ -105,17 +105,23 @@ async function git(...args: string[]): Promise<string> {
 
 libraryRouter.get("/git-status", async (_req, res) => {
   if (!(await isGitRepo())) {
-    res.json({
-      isGitRepo: false,
-      hasRemote: false,
-      remoteUrl: null,
-      branch: null,
-      isDirty: false,
-      commitCount: 0,
-      ahead: 0,
-      behind: 0,
-    });
-    return;
+    // Auto-init git if the library directory exists
+    try {
+      await fs.access(LIBRARY_DIR);
+      await execFileAsync("git", ["-C", LIBRARY_DIR, "init", "-b", "main"]);
+    } catch {
+      res.json({
+        isGitRepo: false,
+        hasRemote: false,
+        remoteUrl: null,
+        branch: null,
+        isDirty: false,
+        commitCount: 0,
+        ahead: 0,
+        behind: 0,
+      });
+      return;
+    }
   }
 
   let remoteUrl: string | null = null;

@@ -8,7 +8,131 @@ import {
   TypeBadge,
   ImpactBadge,
   PhaseBadge,
+  SyncBadge,
 } from "../components/SharedUI";
+
+// ── Sync Status Panel ────────────────────────────────────────────────────
+
+function SyncStatusPanel({ projectName }: { projectName: string }) {
+  const syncStatus = useDriftStore((s) => s.syncStatus);
+  const syncLoading = useDriftStore((s) => s.syncLoading);
+  const syncError = useDriftStore((s) => s.syncError);
+  const fetchSyncStatus = useDriftStore((s) => s.fetchSyncStatus);
+  const syncPull = useDriftStore((s) => s.syncPull);
+  const syncPush = useDriftStore((s) => s.syncPush);
+  const toggleExclude = useDriftStore((s) => s.toggleExclude);
+
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchSyncStatus(projectName);
+  }, [projectName, fetchSyncStatus]);
+
+  const handleAction = async (fn: () => Promise<string>) => {
+    setActionMessage(null);
+    const msg = await fn();
+    setActionMessage(msg);
+    setTimeout(() => setActionMessage(null), 5000);
+  };
+
+  const artifacts = syncStatus?.artifacts ?? [];
+  const summary = syncStatus?.summary;
+
+  return (
+    <div className="panel">
+      <div className="panel-header">
+        <h3>Library Sync</h3>
+        <div style={{ display: "flex", gap: "var(--sp-2)", alignItems: "center" }}>
+          <button
+            className="btn"
+            onClick={() => handleAction(() => syncPull(projectName))}
+            disabled={syncLoading}
+          >
+            Pull
+          </button>
+          <button
+            className="btn"
+            onClick={() => handleAction(() => syncPush(projectName))}
+            disabled={syncLoading}
+          >
+            Push
+          </button>
+        </div>
+      </div>
+
+      {summary && summary.total > 0 && (
+        <div style={{ padding: "var(--sp-3) var(--sp-4)", borderBottom: "1px solid var(--border-subtle)", display: "flex", gap: "var(--sp-3)", flexWrap: "wrap", fontSize: 13 }}>
+          {summary.in_sync > 0 && (
+            <span className="badge badge-low">{summary.in_sync} in sync</span>
+          )}
+          {summary.library_newer > 0 && (
+            <span className="badge badge-accent">{summary.library_newer} library newer</span>
+          )}
+          {summary.project_newer > 0 && (
+            <span className="badge badge-medium">{summary.project_newer} project newer</span>
+          )}
+          {summary.not_synced > 0 && (
+            <span className="badge badge-neutral">{summary.not_synced} no mapping</span>
+          )}
+          {summary.excluded > 0 && (
+            <span className="badge badge-neutral">{summary.excluded} excluded</span>
+          )}
+        </div>
+      )}
+
+      <div className="panel-body dense">
+        {artifacts.length > 0 ? (
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Filename</th>
+                <th>Type</th>
+                <th>Status</th>
+                <th style={{ width: 70, textAlign: "center" }}>Exclude</th>
+              </tr>
+            </thead>
+            <tbody>
+              {artifacts.map((art) => (
+                <tr key={art.id}>
+                  <td className="td-name">{art.filename}</td>
+                  <td><TypeBadge type={art.type} /></td>
+                  <td><SyncBadge status={art.status} /></td>
+                  <td style={{ textAlign: "center" }}>
+                    <input
+                      type="checkbox"
+                      checked={art.excluded}
+                      onChange={() =>
+                        toggleExclude(projectName, art.id, !art.excluded)
+                      }
+                      disabled={syncLoading}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <div className="empty-state">
+            {syncLoading ? "Loading sync status\u2026" : "No library artifacts found."}
+          </div>
+        )}
+      </div>
+
+      {actionMessage && (
+        <div style={{ padding: "var(--sp-3) var(--sp-4)", fontSize: 12, color: "var(--text-secondary)", borderTop: "1px solid var(--border-subtle)" }}>
+          {actionMessage}
+        </div>
+      )}
+      {syncError && (
+        <div style={{ padding: "var(--sp-3) var(--sp-4)", fontSize: 12, color: "var(--critical)", borderTop: "1px solid var(--border-subtle)" }}>
+          {syncError}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Project Detail ───────────────────────────────────────────────────────
 
 export default function ProjectDetail() {
   const { name } = useParams<{ name: string }>();
@@ -96,6 +220,8 @@ export default function ProjectDetail() {
           </div>
         </div>
       )}
+
+      <SyncStatusPanel projectName={project.name} />
 
       <div className="panel">
         <div className="panel-header">

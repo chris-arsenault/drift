@@ -1,4 +1,4 @@
-import type { Staleness, PlanProgress } from "../types";
+import type { Staleness, PlanProgress, SyncState } from "../types";
 
 // ── Impact Badge ────────────────────────────────────────────────────────
 
@@ -70,6 +70,32 @@ export function TypeBadge({ type }: { type: string }) {
   return (
     <span className={`badge ${TYPE_CLASS[type] ?? "badge-neutral"}`}>
       {type}
+    </span>
+  );
+}
+
+// ── Sync Badge ─────────────────────────────────────────────────────────
+
+const SYNC_CLASS: Record<SyncState, string> = {
+  in_sync: "badge-low",
+  library_newer: "badge-accent",
+  project_newer: "badge-medium",
+  not_synced: "badge-neutral",
+  excluded: "badge-neutral",
+};
+
+const SYNC_LABEL: Record<SyncState, string> = {
+  in_sync: "In sync",
+  library_newer: "Library newer",
+  project_newer: "Project newer",
+  not_synced: "No mapping",
+  excluded: "Excluded",
+};
+
+export function SyncBadge({ status }: { status: SyncState }) {
+  return (
+    <span className={`badge ${SYNC_CLASS[status]}`}>
+      {SYNC_LABEL[status]}
     </span>
   );
 }

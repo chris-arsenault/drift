@@ -64,12 +64,28 @@ def sync(config_path: Path) -> None:
     manifest = load_json(lib_path / "library.json")
     artifacts = manifest.get("artifacts", [])
 
+    # Load per-project excludes from subscriptions.json
+    project_name = project_root.name
+    exclude_set: set[str] = set()
+    subs_path = lib_path / "subscriptions.json"
+    if subs_path.exists():
+        try:
+            subs = load_json(subs_path)
+            exclude_set = set(subs.get("projects", {}).get(project_name, {}).get("exclude", []))
+        except (json.JSONDecodeError, OSError):
+            pass
+
     synced = 0
     skipped = 0
+    excluded = 0
     no_mapping = 0
 
     for art in artifacts:
         art_type = art.get("type", "")
+
+        if art.get("id", "") in exclude_set:
+            excluded += 1
+            continue
 
         if art_type not in sync_map:
             no_mapping += 1
@@ -99,6 +115,8 @@ def sync(config_path: Path) -> None:
 
     print(file=sys.stderr)
     print(f"[+] Synced {synced} artifact(s), {skipped} already up-to-date.", file=sys.stderr)
+    if excluded:
+        print(f"[*] {excluded} artifact(s) excluded by subscription settings.", file=sys.stderr)
     if no_mapping:
         print(f"[!] {no_mapping} artifact(s) in library have no mapping in this project.", file=sys.stderr)
 

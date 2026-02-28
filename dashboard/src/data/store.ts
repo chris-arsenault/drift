@@ -13,6 +13,7 @@ import type {
   LibraryData,
   ArtifactDetail,
   LibraryGitStatus,
+  ProjectSyncStatus,
 } from "../types";
 
 // ── Store shape ─────────────────────────────────────────────────────────
@@ -24,12 +25,15 @@ export interface DriftStore {
   library: LibraryData | null;
   selectedArtifact: ArtifactDetail | null;
   gitStatus: LibraryGitStatus | null;
+  syncStatus: ProjectSyncStatus | null;
 
   // Status
   loading: boolean;
   error: string | null;
   gitLoading: boolean;
   gitError: string | null;
+  syncLoading: boolean;
+  syncError: string | null;
 
   // Actions
   fetchProjects: () => Promise<void>;
@@ -42,6 +46,10 @@ export interface DriftStore {
   gitSetRemote: (url: string) => Promise<string>;
   gitPush: () => Promise<string>;
   gitPull: () => Promise<string>;
+  fetchSyncStatus: (name: string) => Promise<void>;
+  syncPull: (name: string) => Promise<string>;
+  syncPush: (name: string) => Promise<string>;
+  toggleExclude: (name: string, artifactId: string, excluded: boolean) => Promise<void>;
 }
 
 // ── Store ────────────────────────────────────────────────────────────────
@@ -53,12 +61,15 @@ export const useDriftStore = create<DriftStore>((set) => ({
   library: null,
   selectedArtifact: null,
   gitStatus: null,
+  syncStatus: null,
 
   // Status
   loading: false,
   error: null,
   gitLoading: false,
   gitError: null,
+  syncLoading: false,
+  syncError: null,
 
   // Actions
   fetchProjects: async () => {
@@ -187,6 +198,62 @@ export const useDriftStore = create<DriftStore>((set) => ({
       const msg = (err as Error).message || "Pull failed";
       set({ gitError: msg, gitLoading: false });
       return msg;
+    }
+  },
+
+  // Sync actions
+  fetchSyncStatus: async (name: string) => {
+    set({ syncLoading: true, syncError: null });
+    try {
+      const data = await apiGet<ProjectSyncStatus>(`/projects/${name}/sync`);
+      set({ syncStatus: data, syncLoading: false });
+    } catch (err) {
+      set({
+        syncError: (err as Error).message || "Failed to fetch sync status",
+        syncLoading: false,
+      });
+    }
+  },
+
+  syncPull: async (name: string) => {
+    set({ syncLoading: true, syncError: null });
+    try {
+      const data = await apiPost<{ message: string }>(`/projects/${name}/sync/pull`);
+      const status = await apiGet<ProjectSyncStatus>(`/projects/${name}/sync`);
+      set({ syncStatus: status, syncLoading: false });
+      return data.message;
+    } catch (err) {
+      const msg = (err as Error).message || "Pull failed";
+      set({ syncError: msg, syncLoading: false });
+      return msg;
+    }
+  },
+
+  syncPush: async (name: string) => {
+    set({ syncLoading: true, syncError: null });
+    try {
+      const data = await apiPost<{ message: string }>(`/projects/${name}/sync/push`);
+      const status = await apiGet<ProjectSyncStatus>(`/projects/${name}/sync`);
+      set({ syncStatus: status, syncLoading: false });
+      return data.message;
+    } catch (err) {
+      const msg = (err as Error).message || "Push failed";
+      set({ syncError: msg, syncLoading: false });
+      return msg;
+    }
+  },
+
+  toggleExclude: async (name: string, artifactId: string, excluded: boolean) => {
+    set({ syncLoading: true, syncError: null });
+    try {
+      await apiPost(`/projects/${name}/sync/exclude`, { artifactId, excluded });
+      const status = await apiGet<ProjectSyncStatus>(`/projects/${name}/sync`);
+      set({ syncStatus: status, syncLoading: false });
+    } catch (err) {
+      set({
+        syncError: (err as Error).message || "Failed to toggle exclude",
+        syncLoading: false,
+      });
     }
   },
 }));
