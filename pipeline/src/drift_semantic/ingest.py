@@ -41,7 +41,8 @@ def ingest_purposes(file_path: Path, output_dir: Path) -> None:
 
     ensure_output_dir(output_dir)
     dest = output_dir / "purpose-statements.json"
-    shutil.copy2(file_path, dest)
+    if file_path.resolve() != dest.resolve():
+        shutil.copy2(file_path, dest)
     print(f"  Ingested {len(data)} purpose statements to {dest}", file=sys.stderr)
 
 
@@ -82,7 +83,8 @@ def ingest_findings(file_path: Path, output_dir: Path) -> None:
 
     ensure_output_dir(output_dir)
     dest = output_dir / "findings.json"
-    shutil.copy2(file_path, dest)
+    if file_path.resolve() != dest.resolve():
+        shutil.copy2(file_path, dest)
     print(f"  Ingested {len(data)} findings to {dest}", file=sys.stderr)
 
 
