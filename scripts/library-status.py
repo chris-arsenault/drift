@@ -3,7 +3,7 @@
 
 Modes:
   --list                 List all artifacts in the library
-  (default)              Compare library artifacts vs project (filtered by tags)
+  (default)              Compare library artifacts vs project
 
 Usage:
     python3 library-status.py [--list] [--library <path>] <config-file>
@@ -46,10 +46,6 @@ def resolve_library_path(raw: str) -> Path:
     return Path(os.path.expanduser(raw)).resolve()
 
 
-def tags_match(artifact_tags: list[str], project_tags: list[str]) -> bool:
-    return bool(set(artifact_tags) & set(project_tags))
-
-
 def list_library(lib_path: Path) -> None:
     """Print all artifacts in the library."""
     if not (lib_path / "library.json").exists():
@@ -72,12 +68,11 @@ def list_library(lib_path: Path) -> None:
         print(f"\n{art_type} ({len(by_type[art_type])})")
         print("-" * 60)
         for art in sorted(by_type[art_type], key=lambda a: a.get("id", "")):
-            tags = ", ".join(art.get("tags", []))
             source = art.get("source_project", "?")
             updated = art.get("updated", "?")
             desc = art.get("description", "")
             filename = art.get("filename", art.get("id", "?"))
-            line = f"  {filename:<30} [{tags}] from {source} ({updated})"
+            line = f"  {filename:<30} from {source} ({updated})"
             if desc:
                 line += f"\n{'':34}{desc}"
             print(line)
@@ -91,7 +86,6 @@ def status(config_path: Path, lib_path_override: Path | None = None) -> None:
     project_root = config_path.parent.parent
 
     lib_path = lib_path_override or resolve_library_path(config.get("library", "~/.drift/library"))
-    project_tags = config.get("tags", [])
     sync_map = config.get("sync", {})
 
     if not (lib_path / "library.json").exists():
@@ -101,14 +95,8 @@ def status(config_path: Path, lib_path_override: Path | None = None) -> None:
     manifest = load_json(lib_path / "library.json")
     artifacts = manifest.get("artifacts", [])
 
-    if not project_tags:
-        print("[!] No tags in config — showing all artifacts.", file=sys.stderr)
-        matching = artifacts
-    else:
-        matching = [a for a in artifacts if tags_match(a.get("tags", []), project_tags)]
-
-    if not matching:
-        print("No matching artifacts found.", file=sys.stderr)
+    if not artifacts:
+        print("No artifacts in library.", file=sys.stderr)
         return
 
     in_sync: list[str] = []
@@ -116,7 +104,7 @@ def status(config_path: Path, lib_path_override: Path | None = None) -> None:
     project_newer: list[str] = []
     not_synced: list[str] = []
 
-    for art in matching:
+    for art in artifacts:
         art_type = art.get("type", "")
         filename = art.get("filename", os.path.basename(art.get("path", art["id"])))
         label = f"{art_type}/{filename}"
@@ -146,8 +134,8 @@ def status(config_path: Path, lib_path_override: Path | None = None) -> None:
                 project_newer.append(label)
 
     # Print report
-    total = len(matching)
-    print(f"Library status ({total} matching artifact(s)):\n")
+    total = len(artifacts)
+    print(f"Library status ({total} artifact(s)):\n")
 
     if in_sync:
         print(f"  In sync ({len(in_sync)}):")
@@ -170,7 +158,7 @@ def status(config_path: Path, lib_path_override: Path | None = None) -> None:
             print(f"    ? {item}")
 
     if not library_newer and not project_newer and not not_synced:
-        print("\nAll matching artifacts are in sync.")
+        print("\nAll artifacts are in sync.")
 
 
 def main() -> None:

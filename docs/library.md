@@ -23,8 +23,8 @@ graph LR
 ```
 
 1. **drift-guard** generates artifacts in a project
-2. `drift library publish` copies them to the library with tags
-3. `drift library sync` in another project pulls matching artifacts (filtered by tag intersection)
+2. `drift library publish` copies them to the library
+3. `drift library sync` in another project pulls artifacts into it
 
 The library is **local-first**: it lives at `~/.drift/library/` and works immediately without any git setup. Optionally, you can make the library directory a git repo for team sharing.
 
@@ -52,12 +52,11 @@ This creates:
 
 ### Configure a project
 
-`drift install-skill` creates `.drift-audit/config.json` automatically. Edit the tags to match your project's tech stack:
+`drift install-skill` creates `.drift-audit/config.json` automatically:
 
 ```json
 {
   "library": "~/.drift/library",
-  "tags": ["react", "zustand", "tanstack-query"],
   "sync": {
     "eslint-rule": "eslint-rules/",
     "adr": "docs/adr/",
@@ -66,8 +65,6 @@ This creates:
   }
 }
 ```
-
-**Tags** control which artifacts flow to/from this project. When publishing, the project's tags are attached to artifacts. When syncing, only artifacts whose tags overlap with the project's tags are pulled in.
 
 **Sync mappings** tell drift where each artifact type lives in your project. Adjust paths to match your directory conventions.
 
@@ -79,21 +76,20 @@ Scans the project's artifact directories (from `sync` mappings in config) and co
 
 - Uses SHA-256 checksums to detect changes
 - Skips unchanged files
-- Merges tags: if an artifact exists with tags `["react"]` and you publish from a project with tags `["react", "zustand"]`, the library entry gets `["react", "zustand"]`
 - Derives artifact type from which sync mapping matched
 
 ### `drift library sync`
 
-Pulls matching artifacts from the library into the project.
+Pulls artifacts from the library into the project.
 
-- Filters by tag intersection: artifact matches if **any** of its tags appear in the project's tag list
+- Syncs all artifacts that have a matching sync mapping in the project config
 - Only copies if checksum differs (library version is different from local)
 - Creates destination directories if needed
 - Reports what was synced
 
 ### `drift library list`
 
-Prints all artifacts in the library, grouped by type. Shows tags, source project, and last update date.
+Prints all artifacts in the library, grouped by type. Shows source project and last update date.
 
 ### `drift library status`
 
@@ -120,24 +116,6 @@ In online mode, the CLAUDE.md instructions tell Claude to:
 - Run `drift library publish` after completing any guard phase
 
 This happens silently as part of the pipeline — no confirmation prompts.
-
-## Tag Strategy
-
-Tags should describe the tech stack and domain. Projects sharing similar stacks will share more artifacts.
-
-**Good tags:**
-- Technology: `react`, `vue`, `express`, `fastify`
-- State management: `zustand`, `redux`, `tanstack-query`
-- Domain: `monorepo`, `spa`, `ssr`
-
-**Avoid:**
-- Too broad: `javascript`, `typescript` (everything matches)
-- Too narrow: `my-project-name` (nothing else matches)
-
-A reasonable set for a React project:
-```json
-["react", "zustand", "tanstack-query"]
-```
 
 ## Team Sharing
 

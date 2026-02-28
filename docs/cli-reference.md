@@ -130,13 +130,13 @@ Creates the directory structure and an empty `library.json` manifest.
 
 Publish guard artifacts from the current project to the library.
 
-Reads `.drift-audit/config.json` to find artifact directories (via `sync` mappings), computes checksums, and copies new/changed files to the library. Published artifacts inherit the project's tags.
+Reads `.drift-audit/config.json` to find artifact directories (via `sync` mappings), computes checksums, and copies new/changed files to the library.
 
 ### `drift library sync`
 
-Pull matching artifacts from the library into the current project.
+Pull artifacts from the library into the current project.
 
-Filters library artifacts by tag intersection with the project's tags. Only copies files where the library version differs from the local version.
+Syncs all artifacts that have a matching sync mapping in the project config. Only copies files where the library version differs from the local version.
 
 ### `drift library list`
 

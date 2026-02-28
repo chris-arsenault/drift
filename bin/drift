@@ -137,7 +137,6 @@ drift_install_skill() {
         cat > "$config_file" << 'CFGEOF'
 {
   "library": "~/.drift/library",
-  "tags": [],
   "mode": "offline",
   "sync": {
     "eslint-rule": "eslint-rules/",
@@ -147,7 +146,7 @@ drift_install_skill() {
   }
 }
 CFGEOF
-        success "Created .drift-audit/config.json (edit tags to enable library sync)"
+        success "Created .drift-audit/config.json"
     else
         # Read existing mode preference
         mode="$(_read_config_mode "$config_file")"

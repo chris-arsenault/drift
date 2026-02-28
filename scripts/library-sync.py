@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""Sync matching artifacts from the centralized library into a project.
+"""Sync artifacts from the centralized library into a project.
 
 Reads .drift-audit/config.json for:
   - library path
-  - project tags (used to filter artifacts)
   - sync mappings (artifact type → project directory)
 
-Copies artifacts whose tags intersect with the project's tags.
+Copies artifacts that have a matching sync mapping.
 Only copies when the checksum differs (library is newer).
 
 Usage:
@@ -50,28 +49,17 @@ def resolve_library_path(raw: str) -> Path:
     return Path(os.path.expanduser(raw)).resolve()
 
 
-def tags_match(artifact_tags: list[str], project_tags: list[str]) -> bool:
-    """True if any artifact tag appears in the project's tag list."""
-    return bool(set(artifact_tags) & set(project_tags))
-
-
 def sync(config_path: Path) -> None:
     config = load_json(config_path)
     project_root = config_path.parent.parent
 
     lib_path = resolve_library_path(config.get("library", "~/.drift/library"))
-    project_tags = config.get("tags", [])
     sync_map = config.get("sync", {})
 
     if not lib_path.exists() or not (lib_path / "library.json").exists():
         print(f"[-] Library not found at {lib_path}", file=sys.stderr)
         print("[-] Run 'drift library init' first.", file=sys.stderr)
         sys.exit(1)
-
-    if not project_tags:
-        print("[!] No tags in .drift-audit/config.json — nothing will match.", file=sys.stderr)
-        print("[!] Add tags to enable sync (e.g. [\"react\", \"zustand\"]).", file=sys.stderr)
-        return
 
     manifest = load_json(lib_path / "library.json")
     artifacts = manifest.get("artifacts", [])
@@ -81,11 +69,7 @@ def sync(config_path: Path) -> None:
     no_mapping = 0
 
     for art in artifacts:
-        art_tags = art.get("tags", [])
         art_type = art.get("type", "")
-
-        if not tags_match(art_tags, project_tags):
-            continue
 
         if art_type not in sync_map:
             no_mapping += 1
@@ -116,7 +100,7 @@ def sync(config_path: Path) -> None:
     print(file=sys.stderr)
     print(f"[+] Synced {synced} artifact(s), {skipped} already up-to-date.", file=sys.stderr)
     if no_mapping:
-        print(f"[!] {no_mapping} artifact(s) matched by tag but have no sync mapping for their type.", file=sys.stderr)
+        print(f"[!] {no_mapping} artifact(s) in library have no sync mapping in this project.", file=sys.stderr)
 
 
 def main() -> None:

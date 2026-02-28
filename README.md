@@ -91,11 +91,10 @@ drift library list       # show library contents
 drift library status     # compare library vs project
 ```
 
-Artifacts are scoped by **tags**. Set tags in `.drift-audit/config.json`:
+Sync mappings in `.drift-audit/config.json` control where artifacts go:
 
 ```json
 {
-  "tags": ["react", "zustand"],
   "sync": {
     "eslint-rule": "eslint-rules/",
     "adr": "docs/adr/"

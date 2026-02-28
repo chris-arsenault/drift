@@ -3,7 +3,6 @@
 
 Reads .drift-audit/config.json to find:
   - library path
-  - project tags
   - sync mappings (artifact type → project directory)
 
 Scans each sync directory, computes checksums, and copies new/updated
@@ -70,7 +69,6 @@ def resolve_library_path(raw: str) -> Path:
 def collect_artifacts(
     project_root: Path,
     sync_map: dict[str, str],
-    tags: list[str],
     project_name: str,
 ) -> list[dict]:
     """Walk sync directories and collect publishable artifact metadata."""
@@ -102,7 +100,6 @@ def collect_artifacts(
                     "id": art_id,
                     "type": art_type,
                     "filename": entry.name,
-                    "tags": list(tags),
                     "source_project": project_name,
                     "created": now,
                     "updated": now,
@@ -120,7 +117,6 @@ def publish(config_path: Path) -> None:
     project_root = config_path.parent.parent  # .drift-audit/config.json → project root
 
     lib_path = resolve_library_path(config.get("library", "~/.drift/library"))
-    tags = config.get("tags", [])
     sync_map = config.get("sync", {})
 
     # Derive project name
@@ -135,12 +131,8 @@ def publish(config_path: Path) -> None:
         print("[-] Run 'drift library init' first.", file=sys.stderr)
         sys.exit(1)
 
-    if not tags:
-        print("[!] No tags in .drift-audit/config.json — artifacts will have no tags.", file=sys.stderr)
-        print("[!] Other projects won't match them during sync.", file=sys.stderr)
-
     # Collect from project
-    local_artifacts = collect_artifacts(project_root, sync_map, tags, project_name)
+    local_artifacts = collect_artifacts(project_root, sync_map, project_name)
 
     if not local_artifacts:
         print("[*] No artifacts found to publish.", file=sys.stderr)
@@ -171,8 +163,6 @@ def publish(config_path: Path) -> None:
             old["checksum"] = art["checksum"]
             old["updated"] = art["updated"]
             old["source_project"] = art["source_project"]
-            # Merge tags (union)
-            old["tags"] = sorted(set(old.get("tags", [])) | set(art["tags"]))
         else:
             # New artifact — assign library-relative path
             art["path"] = f"{TYPE_DIRS[art['type']]}/{art['filename']}"
