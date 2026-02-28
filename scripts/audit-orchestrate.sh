@@ -350,27 +350,56 @@ step_1_extract() {
 step_2_purpose_statements() {
     step_header 2 "Purpose Statements (Claude)"
 
-    # Skip if purpose statements already exist
-    if [[ -f "$PURPOSES" ]] && gate_json_nonempty_array "$PURPOSES" "" "existing purpose statements" 2>/dev/null; then
-        local existing_count
-        existing_count="$(python3 -c "import json; print(len(json.load(open('$PURPOSES'))))" 2>/dev/null || echo "0")"
-        success "Reusing $existing_count existing purpose statements. Delete $PURPOSES to regenerate."
-        return 0
-    fi
-
     SESSION_SEMANTIC="$(_gen_uuid)"
 
     local unit_count
     unit_count="$(python3 -c "import json; d=json.load(open('$CODE_UNITS')); print(len(d.get('units',d)) if isinstance(d,dict) else len(d))" 2>/dev/null || echo "?")"
 
+    # Check for existing purpose statements — reuse + add missing
+    local existing_count=0
+    local reuse_context=""
+    if [[ -f "$PURPOSES" ]]; then
+        existing_count="$(python3 -c "import json; print(len(json.load(open('$PURPOSES'))))" 2>/dev/null || echo "0")"
+    fi
+
+    if [[ "$existing_count" -gt 0 ]]; then
+        # Check coverage: how many units still need purpose statements
+        local missing_count
+        missing_count="$(python3 -c "
+import json, sys
+units = json.load(open(sys.argv[1]))
+if isinstance(units, dict):
+    units = units.get('units', [])
+unit_ids = {u.get('id','') for u in units if isinstance(u, dict)}
+purposes = json.load(open(sys.argv[2]))
+covered = {p.get('unitId','') for p in purposes if isinstance(p, dict)}
+missing = unit_ids - covered
+print(len(missing))
+" "$CODE_UNITS" "$PURPOSES" 2>/dev/null || echo "?")"
+
+        if [[ "$missing_count" == "0" ]]; then
+            success "All $existing_count purpose statements present. Nothing to add."
+            return 0
+        fi
+
+        info "Found $existing_count existing purpose statements, $missing_count units still need coverage."
+        reuse_context="
+EXISTING PURPOSE STATEMENTS:
+- $PURPOSES already contains $existing_count purpose statements
+- Read the existing file FIRST to see which units are covered
+- Only write statements for units that DON'T already have one
+- MERGE your new statements into the existing file (load existing array, append new entries, write back)
+- Do NOT overwrite or duplicate existing entries"
+    fi
+
     local prompt="You are writing purpose statements for code units in: $PROJECT_ROOT
 
 Artifacts from Step 1:
 - Code units ($unit_count): $CODE_UNITS
-
+$reuse_context
 YOUR TASK:
 1. Read $CODE_UNITS to understand the extracted units
-2. For every component and hook, read the actual source code
+2. $(if [[ -n "$reuse_context" ]]; then echo "Read $PURPOSES to see which units already have statements"; else echo "For every component and hook, read the actual source code"; fi)
 3. Write a one-sentence purpose statement describing what each unit DOES functionally
 4. Purpose statements should capture the semantic intent, not just restate the name
 5. Cover ALL components and hooks at minimum — functions and constants if time allows
