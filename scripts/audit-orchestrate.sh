@@ -253,14 +253,14 @@ _claude_call() {
     local exit_code=0
 
     # stream-json outputs events in real-time.
-    # Verbose: raw JSON to terminal + log.
-    # Non-verbose: filter to progress lines on terminal, raw JSON to log only.
+    # Always: pipe through stream-progress.py (filters to human-readable on stderr, raw JSON to log).
+    # Verbose: also pass --verbose to claude for turn-by-turn detail in the stream.
     if [[ "${VERBOSE:-0}" -eq 1 ]]; then
-        echo "$user_prompt" | "${cmd[@]}" --verbose 2>&1 | tee -a "$LOG_FILE" || exit_code=$?
-    else
-        echo "$user_prompt" | "${cmd[@]}" 2>&1 \
-            | python3 -u "$DRIFT_HOME/scripts/stream-progress.py" "$LOG_FILE" || exit_code=$?
+        cmd+=(--verbose)
     fi
+
+    echo "$user_prompt" | "${cmd[@]}" 2>&1 \
+        | python3 -u "$DRIFT_HOME/scripts/stream-progress.py" "$LOG_FILE" || exit_code=$?
 
     [[ -n "$sys_prompt_tmpfile" ]] && rm -f "$sys_prompt_tmpfile"
 
@@ -304,6 +304,16 @@ step_0_library_pull() {
 step_1_extract() {
     step_header 1 "Extract + Feature Extraction"
 
+    # Skip if code units already exist
+    if [[ -f "$CODE_UNITS" ]]; then
+        local existing_count
+        existing_count="$(python3 -c "import json; d=json.load(open('$CODE_UNITS')); print(len(d.get('units',d)) if isinstance(d,dict) else len(d))" 2>/dev/null || echo "0")"
+        if [[ "$existing_count" -gt 0 ]]; then
+            success "Reusing $existing_count existing code units. Delete $CODE_UNITS to re-extract."
+            return 0
+        fi
+    fi
+
     if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
         info "[DRY RUN] extract → ast-grep → fingerprint → typesig → callgraph → depcontext"
         return 0
@@ -339,6 +349,14 @@ step_1_extract() {
 
 step_2_purpose_statements() {
     step_header 2 "Purpose Statements (Claude)"
+
+    # Skip if purpose statements already exist
+    if [[ -f "$PURPOSES" ]] && gate_json_nonempty_array "$PURPOSES" "" "existing purpose statements" 2>/dev/null; then
+        local existing_count
+        existing_count="$(python3 -c "import json; print(len(json.load(open('$PURPOSES'))))" 2>/dev/null || echo "0")"
+        success "Reusing $existing_count existing purpose statements. Delete $PURPOSES to regenerate."
+        return 0
+    fi
 
     SESSION_SEMANTIC="$(_gen_uuid)"
 
@@ -595,10 +613,19 @@ DELIVERABLES:
 - $FINDINGS with cluster verdicts
 - $MANIFEST updated with type:semantic entries"
 
+    # Resume the semantic session if step 2 ran in this invocation;
+    # otherwise start a fresh session (step 2 was skipped due to reuse).
+    local session_flag
+    if [[ -n "$SESSION_SEMANTIC" ]]; then
+        session_flag="--resume $SESSION_SEMANTIC"
+    else
+        session_flag="--session-id $(_gen_uuid)"
+    fi
+
     _claude_call "cluster verification" \
         "$DRIFT_HOME/skill/drift-audit-semantic/SKILL.md" \
         "$prompt" \
-        "--resume $SESSION_SEMANTIC"
+        "$session_flag"
 
     gate_file_exists "$FINDINGS" "findings.json" || {
         error "Step 5 failed: no findings.json produced"
