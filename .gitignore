@@ -1,11 +1,15 @@
 # Dependencies
 extractor/node_modules/
+dashboard/node_modules/
 pipeline/.venv/
 pipeline/src/*.egg-info/
 
 # Python
 __pycache__/
 *.pyc
+
+# Build output
+dashboard/dist/
 
 # Pipeline output
 .drift-audit/
