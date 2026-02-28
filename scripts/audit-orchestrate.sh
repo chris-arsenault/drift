@@ -352,74 +352,122 @@ step_2_purpose_statements() {
 
     SESSION_SEMANTIC="$(_gen_uuid)"
 
-    local unit_count
-    unit_count="$(python3 -c "import json; d=json.load(open('$CODE_UNITS')); print(len(d.get('units',d)) if isinstance(d,dict) else len(d))" 2>/dev/null || echo "?")"
-
-    # Check for existing purpose statements — reuse + add missing
-    local existing_count=0
-    local reuse_context=""
-    if [[ -f "$PURPOSES" ]]; then
-        existing_count="$(python3 -c "import json; print(len(json.load(open('$PURPOSES'))))" 2>/dev/null || echo "0")"
-    fi
-
-    if [[ "$existing_count" -gt 0 ]]; then
-        # Check coverage: how many units still need purpose statements
-        local missing_count
-        missing_count="$(python3 -c "
+    # Deterministically compute which units need purpose statements.
+    # Writes a work file so Claude doesn't waste turns figuring out the diff.
+    local work_file="$AUDIT_DIR/purpose-work.json"
+    local work_result
+    work_result="$(python3 -c "
 import json, sys
-units = json.load(open(sys.argv[1]))
-if isinstance(units, dict):
-    units = units.get('units', [])
-unit_ids = {u.get('id','') for u in units if isinstance(u, dict)}
-purposes = json.load(open(sys.argv[2]))
-covered = {p.get('unitId','') for p in purposes if isinstance(p, dict)}
-missing = unit_ids - covered
-print(len(missing))
-" "$CODE_UNITS" "$PURPOSES" 2>/dev/null || echo "?")"
 
-        if [[ "$missing_count" == "0" ]]; then
-            success "All $existing_count purpose statements present. Nothing to add."
-            return 0
-        fi
+units_path, purposes_path, work_path = sys.argv[1], sys.argv[2], sys.argv[3]
 
-        info "Found $existing_count existing purpose statements, $missing_count units still need coverage."
-        reuse_context="
-EXISTING PURPOSE STATEMENTS:
-- $PURPOSES already contains $existing_count purpose statements
-- Read the existing file FIRST to see which units are covered
-- Only write statements for units that DON'T already have one
-- MERGE your new statements into the existing file (load existing array, append new entries, write back)
-- Do NOT overwrite or duplicate existing entries"
+# Load all units
+raw = json.load(open(units_path))
+units = raw.get('units', raw) if isinstance(raw, dict) else raw
+
+# Load existing purposes (if any)
+existing = []
+covered_ids = set()
+try:
+    existing = json.load(open(purposes_path))
+    covered_ids = {p.get('unitId','') for p in existing if isinstance(p, dict)}
+except (FileNotFoundError, json.JSONDecodeError):
+    pass
+
+# Find uncovered units — strip sourceCode to keep the file small
+missing = []
+for u in units:
+    if not isinstance(u, dict):
+        continue
+    if u.get('id','') in covered_ids:
+        continue
+    slim = {k: u[k] for k in ('id','name','kind','filePath','lineRange') if k in u}
+    missing.append(slim)
+
+# Write work file
+json.dump(missing, open(work_path, 'w'), indent=2)
+print(f'{len(existing)}|{len(units)}|{len(missing)}')
+" "$CODE_UNITS" "$PURPOSES" "$work_file" 2>/dev/null || echo "0|0|0")"
+
+    local existing_count unit_count missing_count
+    IFS='|' read -r existing_count unit_count missing_count <<< "$work_result"
+
+    if [[ "$missing_count" == "0" ]]; then
+        success "All $existing_count purpose statements present ($unit_count units). Nothing to add."
+        rm -f "$work_file"
+        return 0
     fi
 
+    info "$existing_count existing, $missing_count units need purpose statements (of $unit_count total)."
+
+    if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
+        info "[DRY RUN] Would call Claude to write $missing_count purpose statements"
+        rm -f "$work_file"
+        return 0
+    fi
+
+    # Build prompt — Claude gets the pre-computed work file, not the full code-units.json
+    local output_file="$AUDIT_DIR/purpose-new.json"
     local prompt="You are writing purpose statements for code units in: $PROJECT_ROOT
 
-Artifacts from Step 1:
-- Code units ($unit_count): $CODE_UNITS
-$reuse_context
+INPUT:
+- Units needing statements ($missing_count): $work_file
+  Each entry has: id, name, kind, filePath, lineRange
+- Full code units (for source reference): $CODE_UNITS
+
 YOUR TASK:
-1. Read $CODE_UNITS to understand the extracted units
-2. $(if [[ -n "$reuse_context" ]]; then echo "Read $PURPOSES to see which units already have statements"; else echo "For every component and hook, read the actual source code"; fi)
-3. Write a one-sentence purpose statement describing what each unit DOES functionally
-4. Purpose statements should capture the semantic intent, not just restate the name
-5. Cover ALL components and hooks at minimum — functions and constants if time allows
-6. Save to $PURPOSES as a JSON array of {\"unitId\": \"...\", \"purpose\": \"...\"}
+1. Read $work_file — this lists EXACTLY the $missing_count units that need statements
+2. For each unit, read its source code at the filePath/lineRange shown
+3. Write a one-sentence purpose statement describing what it DOES functionally
+4. Save to $output_file as a JSON array of {\"unitId\": \"...\", \"purpose\": \"...\"}
 
 IMPORTANT:
 - Focus on functional purpose (\"renders a modal for bulk image tagging\") not structure (\"a React component\")
 - These statements will be embedded and used for semantic similarity scoring
-- Zero purpose statements is a failure — do not stop until the file is written
+- Write statements for ALL $missing_count units in $work_file — do not skip any
+- Do NOT read or modify $PURPOSES — the orchestrator handles merging
 - Do NOT run any pipeline commands or modify any other files
 
 Environment: DRIFT_SEMANTIC=$DRIFT_HOME
 
 DELIVERABLE:
-- $PURPOSES with purpose statements for all components/hooks"
+- $output_file with $missing_count purpose statements"
 
     _claude_call "purpose statements" \
         "$DRIFT_HOME/skill/drift-audit-semantic/SKILL.md" \
         "$prompt" \
         "--session-id $SESSION_SEMANTIC"
+
+    # Deterministic merge: combine existing + new
+    if [[ -f "$output_file" ]]; then
+        python3 -c "
+import json, sys
+existing_path, new_path, out_path = sys.argv[1], sys.argv[2], sys.argv[3]
+
+existing = []
+try:
+    existing = json.load(open(existing_path))
+except (FileNotFoundError, json.JSONDecodeError):
+    pass
+
+new = json.load(open(new_path))
+if not isinstance(new, list):
+    new = []
+
+# Deduplicate by unitId (existing wins on conflict)
+seen = {p.get('unitId','') for p in existing if isinstance(p, dict)}
+for p in new:
+    if isinstance(p, dict) and p.get('unitId','') not in seen:
+        existing.append(p)
+        seen.add(p.get('unitId',''))
+
+json.dump(existing, open(out_path, 'w'), indent=2)
+print(f'Merged: {len(existing)} total ({len(new)} new)')
+" "$PURPOSES" "$output_file" "$PURPOSES" 2>&1 | _log
+        rm -f "$output_file"
+    fi
+
+    rm -f "$work_file"
 
     gate_file_exists "$PURPOSES" "purpose-statements.json" || {
         error "Step 2 failed: no purpose-statements.json produced"
@@ -433,7 +481,7 @@ DELIVERABLE:
 
     local purpose_count
     purpose_count="$(python3 -c "import json; print(len(json.load(open('$PURPOSES'))))" 2>/dev/null || echo "?")"
-    success "$purpose_count purpose statements written."
+    success "$purpose_count total purpose statements ($missing_count new)."
 }
 
 step_3_structural_behavioral() {
