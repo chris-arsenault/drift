@@ -60,7 +60,45 @@ def _status():
     print(f"\r{line}", end="", file=sys.stderr, flush=True)
 
 
-# --- main loop ---
+def _trunc(s, n=60):
+    """Truncate string to n chars with ellipsis."""
+    s = s.replace("\n", " ").strip()
+    return s[:n - 1] + "\u2026" if len(s) > n else s
+
+
+def _tool_detail(name, inp):
+    """Extract a short description from a tool_use input block."""
+    if name == "Bash":
+        # Prefer description, fall back to truncated command
+        desc = inp.get("description", "")
+        if desc:
+            return _trunc(desc, 50)
+        cmd = inp.get("command", "")
+        if cmd:
+            return _trunc(cmd, 50)
+    elif name == "Read":
+        path = inp.get("file_path", "")
+        if path:
+            # Show last 2 path components
+            parts = path.rstrip("/").split("/")
+            return _trunc("/".join(parts[-2:]) if len(parts) > 2 else path, 50)
+    elif name == "Grep":
+        pat = inp.get("pattern", "")
+        path = inp.get("path", "")
+        parts = path.rstrip("/").split("/") if path else []
+        where = parts[-1] if parts else ""
+        return _trunc(f"/{pat}/ {where}".strip(), 50)
+    elif name == "Glob":
+        return _trunc(inp.get("pattern", ""), 50)
+    elif name in ("Edit", "Write"):
+        path = inp.get("file_path", "")
+        if path:
+            parts = path.rstrip("/").split("/")
+            return _trunc("/".join(parts[-2:]) if len(parts) > 2 else path, 50)
+    return ""
+
+
+
 with open(log_path, "a") as log:
     for line in sys.stdin:
         log.write(line)
@@ -133,7 +171,9 @@ with open(log_path, "a") as log:
                     name = block.get("name", "?")
                     if name in ("Agent", "TodoWrite", "TaskOutput"):
                         continue
-                    _out(f"  \u21b3 {name}")
+                    inp = block.get("input", {})
+                    detail = _tool_detail(name, inp)
+                    _out(f"  \u21b3 {name} {detail}" if detail else f"  \u21b3 {name}")
                 elif btype == "text":
                     text = block.get("text", "").strip()
                     if text and len(text) < 200:
