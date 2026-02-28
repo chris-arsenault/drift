@@ -319,12 +319,12 @@ case "$COMMAND" in
         echo "=== Stage 4: CLUSTER ===" >&2
         run_pipeline cluster
 
-        # CSS pipeline: extract, score, cluster
+        # Stage 5: CSS pipeline — extract, score, cluster
         echo "" >&2
-        echo "=== Stage 1b: CSS EXTRACT ===" >&2
+        echo "=== Stage 5a: CSS EXTRACT ===" >&2
         run_pipeline css-extract --project "$PROJECT_PATH"
 
-        echo "=== Stage 3b: CSS SCORE ===" >&2
+        echo "=== Stage 5b: CSS SCORE ===" >&2
         run_pipeline css-score
 
         # Stage 6: Report generation
@@ -392,8 +392,8 @@ Pipeline commands:
   depcontext       Stage 2e: Compute dependency context
   score            Stage 3: Pairwise similarity scoring
   cluster          Stage 4: Community detection
-  css-extract      Stage 1b: Extract CSS units from .css files
-  css-score        Stage 3b: Score and cluster CSS file pairs
+  css-extract      Stage 5a: Extract CSS units from .css files
+  css-score        Stage 5b: Score and cluster CSS file pairs
   report           Stage 6: Generate report
 
 Optional:
