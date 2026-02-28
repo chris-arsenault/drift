@@ -13,37 +13,18 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import sys
 from pathlib import Path
 
-TYPE_DIRS: dict[str, str] = {
-    "eslint-rule": "rules/eslint",
-    "ruff-rule": "rules/ruff",
-    "ast-grep-rule": "rules/ast-grep",
-    "adr": "adr",
-    "pattern": "patterns",
-    "checklist": "checklists",
-}
-
-
-def sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(8192), b""):
-            h.update(chunk)
-    return f"sha256:{h.hexdigest()}"
-
-
-def load_json(path: Path) -> dict:
-    with open(path) as f:
-        return json.load(f)
-
-
-def resolve_library_path(raw: str) -> Path:
-    return Path(os.path.expanduser(raw)).resolve()
+sys.path.insert(0, str(Path(__file__).parent))
+from _drift_common import (
+    TYPE_DIRS,
+    sha256_file,
+    load_json,
+    resolve_library_path,
+)
 
 
 def list_library(lib_path: Path) -> None:

@@ -132,63 +132,40 @@ bash "$DRIFT_SEMANTIC/cli.sh" report
 Review the updated clusters — purpose-enhanced scoring may surface new semantic findings
 that structural signals alone missed.
 
-### Step 6: Update Summary
+### Step 6: Update Summary and Run Quality Gate
 
-After all three audits, recompute the manifest's `summary` field:
+After all three audits, validate the manifest and recompute the summary:
 
-```json
-{
-  "total_drift_areas": "<count all areas>",
-  "total_files_affected": "<sum unique files across all areas>",
-  "high_impact": "<count HIGH areas>",
-  "medium_impact": "<count MEDIUM areas>",
-  "low_impact": "<count LOW areas>",
-  "by_type": {
-    "structural": "<count>",
-    "behavioral": "<count>",
-    "semantic": "<count>"
-  },
-  "evidence_coverage": {
-    "high": "<count areas with code_excerpts + line ranges>",
-    "medium": "<count areas with file paths only>",
-    "low": "<count areas with observation only>"
-  }
-}
+```bash
+drift validate "$PROJECT_ROOT" --fix-summary
 ```
 
-### Step 7: Quality Gate
+This script:
+- Recomputes the summary (area counts by impact/type, unique files, evidence coverage)
+- Writes the corrected summary back to the manifest
+- Runs the quality gate on every area:
+  - `code_excerpts`: every variant has code excerpts with actual source
+  - `line_ranges`: file paths use `path:startLine-endLine` format
+  - `analysis_depth`: 3+ sentences of substantive analysis
+  - `recommendation_specific`: 50+ chars with concrete targets
+  - `semantic_purpose`: semantic findings reference purpose statements
 
-Before presenting findings to the user, validate that every finding has sufficient evidence.
-This prevents shallow, generic output that could apply to any codebase.
-
-**For each area in the manifest, verify:**
-
-1. **Code excerpts exist** — every variant must have at least one `code_excerpts` entry with
-   actual source code (not a description of code). If missing, go back and read the files.
-
-2. **File paths include line ranges** — `files` entries should be `path:startLine-endLine`,
-   not bare file paths. If missing, re-read the files and add line ranges.
-
-3. **Analysis has substance** — the `analysis` field must be 3+ sentences covering: why the
-   drift exists, concrete tradeoffs, and what convergence looks like. If it's 1-2 generic
-   sentences, rewrite it.
-
-4. **Recommendations are actionable** — the `recommendation` field must include a concrete
-   target (API sketch, component interface, migration path). "Extract a shared component"
-   is not actionable. "Extract `ModalShell({ onClose, escapeClose?, scrollLock?, children })`
-   into `packages/shared-components/`" is actionable.
-
-5. **Semantic findings have purpose statements** — every semantic finding must reference
-   purpose statements that demonstrate functional equivalence. If the semantic pipeline
-   produced zero findings, that's a pipeline failure, not an absence of semantic drift.
-   Fall back to manual analysis.
-
-**If any finding fails the quality gate**, fix it before presenting to the user. The
-quality gate is non-negotiable — it's what distinguishes a useful audit from busywork.
+**If any area fails the quality gate**, the script exits non-zero and reports which checks
+failed. Fix the failing areas before presenting findings to the user. The quality gate is
+non-negotiable — it's what distinguishes a useful audit from busywork.
 
 ### Re-Audit Behavior
 
-If the manifest already exists, each audit phase compares against existing entries:
+If the manifest already exists, first check for regressions in previously completed areas:
+
+```bash
+drift plan-update "$PROJECT_ROOT" --check-regressions
+```
+
+This exits non-zero if any completed plan entries have regressed in the manifest. Use
+`--json` for structured output including ADR violation flags.
+
+Then each audit phase compares against existing entries:
 - **New findings** are appended
 - **Previously found areas** are compared — note if drift has worsened, improved, or been resolved
 - **Completed areas** are checked for regression — if drift has returned, flag it prominently
@@ -220,118 +197,37 @@ Present the combined findings when the audit phase is complete.
 
 ## Phase: Plan
 
-Read `.drift-audit/drift-manifest.json` and produce a prioritized attack order.
+Build a prioritized attack plan from the manifest. The plan script handles all mechanical
+work: cross-type deduplication (Jaccard on file sets), dependency graph construction,
+topological sorting with impact weighting, and merging with any existing plan.
 
-### Step 1: Build Dependency Graph
+### Step 1: Build Plan
 
-For each area in the manifest:
-
-1. **Explicit dependencies:** Scan the `analysis` and `recommendation` fields for references
-   to other areas (by ID or by name). Example: "resolving area #1 would largely resolve this"
-   means this area depends on area #1.
-
-2. **File overlap dependencies:** If two areas share files, the higher-impact area should be
-   resolved first (changing shared files twice creates churn).
-
-3. **Logical dependencies:** Some dependencies are domain-logical even without textual
-   references. Build config depends on dependency versions. TypeScript config depends on
-   TypeScript version. Use judgment.
-
-Produce a DAG of area IDs.
-
-### Step 1b: Deduplicate Cross-Type Overlap
-
-The three audit types have genuine overlap. The semantic tool's structural fingerprinting
-can surface findings that also appear in structural or behavioral audits (e.g., "these
-components all handle loading states differently" may appear as both a behavioral Domain 4
-finding and a semantic cluster). Before prioritizing, merge overlapping entries:
-
-1. **Detect overlap by file sets.** For every pair of areas, compute the Jaccard similarity
-   of their file sets (union of all variant files). If overlap > 0.5, they likely describe
-   the same drift from different angles.
-
-2. **Merge strategy.** When two areas overlap:
-   - Keep the **higher-impact** entry as the primary. If equal impact, prefer semantic
-     (it has richer metadata: cluster scores, signal breakdowns, consolidation reasoning).
-   - Merge the other entry's unique files and variants into the primary.
-   - Append the other entry's `analysis` text to the primary's analysis as an
-     "Also noted by [type] audit:" addendum.
-   - Record the merged area's ID in a `merged_from` array on the primary entry.
-   - Delete the secondary entry from the manifest.
-
-3. **Log merges.** When presenting the plan, note which areas were merged so the user
-   understands why a behavioral finding disappeared (it was absorbed into a semantic one).
-
-Common overlaps to watch for:
-- Behavioral Domain 4 (loading/error states) ↔ semantic clusters with `hasLoadingState`/`hasErrorHandling` behavior signals
-- Behavioral Domain 2 (shared component adoption) ↔ semantic clusters where one member is in the shared library
-- Structural "naming cluster" findings ↔ semantic clusters of the same units
-
-### Step 2: Topological Sort with Impact Weighting
-
-Within each dependency tier (areas whose dependencies are all resolved or have none):
-
-1. **Impact:** HIGH (3) > MEDIUM (2) > LOW (1)
-2. **File count:** More files = higher priority (larger blast radius, more value from early resolution)
-3. **Variant count:** Fewer variants = simpler unification = quicker win (tiebreaker)
-
-Sort by impact descending, then file count descending, then variant count ascending.
-
-### Step 3: Merge with Existing Plan
-
-If `.drift-audit/attack-plan.json` exists:
-- Preserve phase progress for areas already in the plan
-- Add newly discovered areas at appropriate rank positions
-- Remove areas that no longer appear in the manifest (resolved naturally)
-- Flag areas that regressed from `completed` back to having drift
-
-If no plan exists, create it fresh.
-
-### Step 4: Present to User
-
-Display the ranked attack order:
-
-```
-Drift Attack Plan (N areas, M completed, K remaining)
-
-Ready to unify:
-  1. [HIGH] Area Name (X files, Y variants)
-  2. [HIGH] Another Area (X files, Y variants) — depends on #1
-
-In progress:
-  3. [MEDIUM] Area Name — unify phase, 8/15 files done
-
-Completed:
-  ✓ Area Name — unified + guarded
-  ✓ Another Area — unified + guarded
-
-Blocked:
-  5. [MEDIUM] Area Name — blocked by #1 (not yet completed)
+```bash
+drift plan "$PROJECT_ROOT"
 ```
 
-Ask the user if they want to reorder or skip any areas. Apply their changes.
+This script:
+- Deduplicates cross-type overlap (Jaccard > 0.5 on file sets → merge)
+- Builds dependency DAG from file overlap (higher-impact blocks lower)
+- Topologically sorts: impact desc → file count desc → variant count asc
+- Merges with existing plan (preserves phase progress, flags regressions)
+- Writes `.drift-audit/attack-plan.json`
+- Outputs the ranked attack order
 
-### Step 5: Save Plan
+Use `--merge-threshold 0.6` to adjust dedup sensitivity, `--json` for machine output.
 
-Write the plan to `.drift-audit/attack-plan.json`:
+### Step 2: Present to User
 
-```json
-{
-  "created": "ISO-8601",
-  "updated": "ISO-8601",
-  "plan": [
-    {
-      "area_id": "kebab-case-id",
-      "rank": 1,
-      "depends_on": [],
-      "phase": "planned",
-      "canonical_variant": null,
-      "unify_summary": null,
-      "guard_artifacts": []
-    }
-  ]
-}
-```
+Present the script's output to the user. The plan shows:
+- **Ready to unify:** areas with all dependencies resolved
+- **In progress:** areas mid-unification
+- **Completed:** areas already unified + guarded
+- **Blocked:** areas waiting on dependencies
+- **Regressions:** previously completed areas where drift returned
+
+Ask the user if they want to reorder or skip any areas. If changes are needed, edit
+`.drift-audit/attack-plan.json` directly and re-run `drift plan "$PROJECT_ROOT"`.
 
 Phase values: `pending` (in manifest but not yet planned), `planned` (approved for unification),
 `unify` (unification in progress), `guard` (unified, guard pending), `completed` (fully done).
@@ -459,12 +355,16 @@ practical usage guide in `docs/patterns/`.
 drift-specific items covering what lint rules cannot catch (semantic correctness,
 architectural intent, edge cases).
 
-### Step 4: Update Plan and Summarize
+### Step 4: Finalize Areas in Plan
 
-For each area:
-- Set `phase` to `completed`
-- Record `guard_artifacts` (list of files created — rules, ADRs, docs)
-- Update `drift-manifest.json` status to `completed`
+For each guarded area, finalize it in the plan and manifest:
+
+```bash
+drift plan-update "$PROJECT_ROOT" --finalize <area-id> --guard-artifacts file1.js docs/adr/001.md ...
+```
+
+This script sets the plan entry's phase to `completed`, records the guard artifacts list,
+and updates the manifest area status to `completed`.
 
 Present consolidated summary:
 - ESLint rules created per area with violation counts
@@ -474,94 +374,34 @@ Present consolidated summary:
 - Pattern docs written
 - Recommended rollout (warn → fix → error → CI)
 
-### Step 5: Verify Drift Markers
+### Step 5: Verify All Guard Artifacts
 
-Before any library push, verify every generated file has the correct drift marker.
-Run the verification check from the guard skill's "Verify Drift Markers" section.
+Run the full verification suite to confirm everything is wired correctly:
 
-If any files are missing their marker, **fix them now** — add the appropriate marker
-(`<!-- drift-generated -->` for `.md`, `// drift-generated` for `.js`/`.ts`,
-`# drift-generated` for `.yml`/`.yaml`) as the first line.
+```bash
+drift verify "$PROJECT_ROOT"
+```
 
-This step is mandatory. Do not proceed to library push with missing markers.
+This runs three checks:
 
-### Step 6: Verify ESLint Integration
+1. **Markers** — every file in sync directories has its drift marker on line 1.
+   Files without markers won't sync to the library.
+2. **ESLint** — every rule file in `eslint-rules/` is imported AND enabled in the
+   ESLint config. Reports INTEGRATED / NOT INTEGRATED per rule.
+3. **ADR** — every ADR's `## Enforcement` section references rules and docs that
+   actually exist. Reports OK / DEGRADED / BROKEN per ADR.
 
-After generating all guard artifacts, verify that ESLint rules are actually wired into the
-project's config. Rules that aren't referenced have zero effect.
+Use `--check markers`, `--check eslint`, or `--check adr` to run individual checks.
+Use `--json` for machine-readable output.
 
-1. **List generated rule files:**
-   ```bash
-   ls "$PROJECT_ROOT"/eslint-rules/*.{js,cjs,mjs,ts} 2>/dev/null
-   ```
+**If any check fails:**
+- Missing markers → add the appropriate marker as line 1 (the report tells you which)
+- Unintegrated rules → wire them into the ESLint config (see
+  `$DRIFT_SEMANTIC/skill/drift-guard/references/eslint-rule-patterns.md`)
+- Broken ADR enforcement → fix the missing referenced files
 
-2. **Detect and read the ESLint config:**
-   ```bash
-   ls "$PROJECT_ROOT"/eslint.config.* 2>/dev/null && echo "Flat config"
-   ls "$PROJECT_ROOT"/.eslintrc* 2>/dev/null && echo "Legacy config"
-   ```
-   Read whichever config file exists.
-
-3. **For each generated rule file, check if it's referenced in the config:**
-   - **Custom rule modules:** Check that the file is imported AND the rule name appears
-     in a `rules: { 'drift-guard/rule-name': '...' }` entry (or equivalent).
-   - **`no-restricted-imports` additions:** Check the config contains the expected
-     restricted paths/patterns from the generated rules.
-   - **`no-restricted-syntax` additions:** Check the config contains the expected
-     AST selectors.
-
-4. **Report results:**
-   ```
-   ESLint Integration Status:
-     eslint-rules/no-direct-fetch.js .... INTEGRATED (warn)
-     eslint-rules/use-modal-shell.js .... NOT INTEGRATED
-     no-restricted-imports additions .... INTEGRATED (2 paths configured)
-   ```
-   For unintegrated rules, provide the exact code to add to the ESLint config
-   (following the patterns in `$DRIFT_SEMANTIC/skill/drift-guard/references/eslint-rule-patterns.md`).
-
-5. **Offer to integrate:**
-   If any rules are not wired, ask the user if they want you to update the ESLint config.
-   If yes, make the changes and verify:
-   ```bash
-   npx eslint src/ --format compact 2>/dev/null | grep -c "Warning\|Error" || echo "0 violations"
-   ```
-
-### Step 7: Verify ADR Enforcement
-
-Cross-reference ADRs with their declared enforcement mechanisms to detect enforcement decay.
-
-1. **Enumerate ADRs:**
-   ```bash
-   find "$PROJECT_ROOT/docs/adr" -name "*.md" 2>/dev/null | sort
-   ```
-
-2. **For each ADR with status "Accepted":**
-   Read the file and parse the `## Enforcement` section. Extract references to:
-   - **ESLint rules:** lines containing rule names (e.g., `drift-guard/rule-name`,
-     `no-restricted-imports`)
-   - **Review checklists:** lines referencing checklist files or PR templates
-   - **Pattern documentation:** lines with file paths like `docs/patterns/...`
-
-3. **Verify each referenced mechanism exists and is active:**
-   - For ESLint rules: check the rule file exists AND is enabled in the ESLint config.
-     If the rule was supposed to be `error` but is `warn` or `off`, flag as degraded.
-   - For review checklists: check the referenced file exists and still contains
-     the drift-related items mentioned in the ADR.
-   - For pattern documentation: check the referenced file exists. Flag if modified
-     more recently than the ADR (pattern may have evolved without ADR update).
-
-4. **Report enforcement status per ADR:**
-   ```
-   ADR Enforcement Status:
-     ADR-0001: Modal Pattern ............. OK (3/3 mechanisms active)
-     ADR-0002: API Client Layer .......... DEGRADED (eslint rule is warn, should be error)
-     ADR-0003: Error Boundary ............ BROKEN (pattern doc missing)
-   ```
-
-5. **For broken or degraded enforcement:**
-   Provide specific remediation steps for each issue and ask the user if they
-   want you to fix them.
+Re-run `drift verify "$PROJECT_ROOT"` after fixes until all checks pass.
+Do not proceed to library push with failing checks.
 
 ---
 
@@ -570,15 +410,16 @@ Cross-reference ADRs with their declared enforcement mechanisms to detect enforc
 When invoked with no phase argument, run all phases in sequence:
 
 1. **Audit** — library pull (if online), run semantic pipeline, discover all drift
-2. **Plan** — prioritize and present to user for approval/reordering
-3. **Unify** — resolve all planned areas autonomously
-4. **Guard** — generate enforcement for all unified areas
-5. **Verify Markers** — run the marker verification check from the guard skill to
-   confirm every generated file has its drift marker. Fix any missing markers.
-6. **Library Push** — if `.drift-audit/config.json` has `"mode": "online"`, run
+2. **Validate** — `drift validate "$PROJECT_ROOT" --fix-summary` (recompute summary + quality gate)
+3. **Plan** — `drift plan "$PROJECT_ROOT"` then present to user for approval/reordering
+4. **Unify** — resolve all planned areas autonomously
+5. **Guard** — generate enforcement for all unified areas
+6. **Finalize** — `drift plan-update "$PROJECT_ROOT" --finalize <id> --guard-artifacts ...` per area
+7. **Verify** — `drift verify "$PROJECT_ROOT"` (markers + ESLint + ADR checks). Fix any failures.
+8. **Library Push** — if `.drift-audit/config.json` has `"mode": "online"`, run
    `drift library push` to share guard artifacts to the centralized library.
    Check the push output for skipped files — any skipped file is a bug to fix.
-7. **Summary** — present full pipeline results
+9. **Summary** — present full pipeline results
 
 The plan phase is the one human checkpoint in the full pipeline. After the user
 approves the plan, unify and guard run autonomously with a summary at the end.

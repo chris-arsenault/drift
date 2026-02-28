@@ -318,84 +318,38 @@ If the user plans to re-run drift-audit periodically, create or update
 
 ## After Generating All Artifacts
 
-### Verify Rule Integration
+### Verify All Guard Artifacts
 
-Re-read the ESLint config and confirm every generated rule is wired in and active:
-
-1. For each rule file: check the config imports it AND enables it.
-2. For `no-restricted-imports`/`no-restricted-syntax` additions: check the config
-   contains the expected restrictions.
-3. If any rules are not wired:
-   - Show the user which rules are missing from the config
-   - Provide the exact config additions needed (see
-     `$DRIFT_SEMANTIC/skill/drift-guard/references/eslint-rule-patterns.md`)
-   - Ask if they want you to update the config
-4. After updating (if applicable), verify rules are active:
-   ```bash
-   npx eslint src/ --format compact 2>/dev/null | grep -c "Warning\|Error" || echo "0 violations"
-   ```
-
-### Verify ADR Cross-References
-
-Before finalizing any ADR, verify that every path referenced in the Enforcement section
-actually exists:
-
-1. Every ESLint rule mentioned must exist as a file in the project AND be enabled
-   in the ESLint config.
-2. Every review checklist reference must point to an existing file.
-3. Every pattern documentation link must point to an existing file.
-
-If any referenced artifact doesn't exist yet, create it before writing the ADR.
-An ADR's enforcement section must never reference artifacts that don't exist.
-
-### Verify Drift Markers
-
-**Before any library push, verify that every generated file has its drift marker.**
-This is not optional. Run this check and fix any failures:
+Run the full verification suite to confirm everything is wired correctly:
 
 ```bash
-# Check all sync directories from config for files missing the drift marker
-CONFIG="$PROJECT_ROOT/.drift-audit/config.json"
-python3 -c "
-import json, sys
-from pathlib import Path
-
-config = json.load(open('$CONFIG'))
-project = Path('$PROJECT_ROOT')
-MARKER = 'drift-generated'
-EXT_MAP = {'.md': '<!-- drift-generated -->', '.js': '// drift-generated',
-           '.ts': '// drift-generated', '.yml': '# drift-generated',
-           '.yaml': '# drift-generated'}
-EXTS = {
-    'eslint-rule': {'.js','.cjs','.mjs','.ts'}, 'adr': {'.md'},
-    'pattern': {'.md'}, 'checklist': {'.md'},
-    'ast-grep-rule': {'.yml','.yaml'}, 'ruff-rule': {'.py','.toml'},
-}
-
-missing = []
-for art_type, rel_dir in config.get('sync', {}).items():
-    src = project / rel_dir
-    if not src.is_dir(): continue
-    exts = EXTS.get(art_type, set())
-    for f in sorted(src.iterdir()):
-        if not f.is_file() or (exts and f.suffix not in exts): continue
-        with open(f) as fh:
-            head = ''.join(next(fh, '') for _ in range(5))
-        if MARKER not in head:
-            missing.append((art_type, str(f.relative_to(project)), EXT_MAP.get(f.suffix, MARKER)))
-
-if missing:
-    print(f'FAIL: {len(missing)} file(s) missing drift marker:')
-    for t, p, m in missing:
-        print(f'  {p}  — add \"{m}\" as line 1')
-    sys.exit(1)
-else:
-    print(f'OK: all files in sync directories have drift markers')
-"
+drift verify "$PROJECT_ROOT"
 ```
 
-**If any files are missing the marker, add it now before proceeding.** Do not push without
-markers — the files will be silently excluded from the library.
+This runs three checks and reports a scoreboard:
+
+1. **Markers** — every file in sync directories has its drift marker on line 1.
+   Reports which files are missing and what marker to add.
+2. **ESLint** — every rule file in `eslint-rules/` is imported AND enabled in the
+   ESLint config. Reports INTEGRATED / NOT INTEGRATED per rule with severity.
+3. **ADR** — every ADR's `## Enforcement` section references rules and docs that
+   actually exist. Reports OK / DEGRADED / BROKEN per ADR.
+
+Use `--check markers`, `--check eslint`, or `--check adr` to run individual checks.
+Use `--json` for machine-readable output.
+
+**If any check fails, fix the issues:**
+
+- **Missing markers** → add the appropriate marker as line 1 (the report says which).
+- **Unintegrated ESLint rules** → wire them into the ESLint config. Provide the exact
+  config additions needed (see
+  `$DRIFT_SEMANTIC/skill/drift-guard/references/eslint-rule-patterns.md`). Ask the user
+  if they want you to update the config.
+- **Broken/degraded ADR enforcement** → create any missing referenced files before
+  finalizing the ADR. An ADR's enforcement section must never reference artifacts
+  that don't exist.
+
+Re-run `drift verify "$PROJECT_ROOT"` after fixes until all checks pass.
 
 ### Library Push
 

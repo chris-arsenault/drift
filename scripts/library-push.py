@@ -14,7 +14,6 @@ Usage:
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import shutil
@@ -22,77 +21,18 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-# ── Artifact type → library subdirectory mapping ─────────────────────────
-TYPE_DIRS: dict[str, str] = {
-    "eslint-rule": "rules/eslint",
-    "ruff-rule": "rules/ruff",
-    "ast-grep-rule": "rules/ast-grep",
-    "adr": "adr",
-    "pattern": "patterns",
-    "checklist": "checklists",
-}
-
-# ── File extension filters per type ──────────────────────────────────────
-TYPE_EXTENSIONS: dict[str, set[str]] = {
-    "eslint-rule": {".js", ".cjs", ".mjs", ".ts"},
-    "ruff-rule": {".py", ".toml"},
-    "ast-grep-rule": {".yml", ".yaml"},
-    "adr": {".md"},
-    "pattern": {".md"},
-    "checklist": {".md"},
-}
-
-# ── Drift marker ─────────────────────────────────────────────────────────
-# Only files containing this marker are considered drift artifacts.
-# drift-guard inserts this when generating files.
-DRIFT_MARKER = "drift-generated"
-MARKER_PATTERNS: dict[str, str] = {
-    ".md": "<!-- drift-generated -->",
-    ".js": "// drift-generated",
-    ".cjs": "// drift-generated",
-    ".mjs": "// drift-generated",
-    ".ts": "// drift-generated",
-    ".py": "# drift-generated",
-    ".toml": "# drift-generated",
-    ".yml": "# drift-generated",
-    ".yaml": "# drift-generated",
-}
-
-
-def has_drift_marker(path: Path) -> bool:
-    """Check if a file contains the drift-generated marker."""
-    try:
-        with open(path, "r", encoding="utf-8", errors="ignore") as f:
-            # Only check the first 5 lines for efficiency
-            for _, line in zip(range(5), f):
-                if DRIFT_MARKER in line:
-                    return True
-    except OSError:
-        pass
-    return False
-
-
-def sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(8192), b""):
-            h.update(chunk)
-    return f"sha256:{h.hexdigest()}"
-
-
-def load_json(path: Path) -> dict:
-    with open(path) as f:
-        return json.load(f)
-
-
-def save_json(path: Path, data: dict) -> None:
-    with open(path, "w") as f:
-        json.dump(data, f, indent=2)
-        f.write("\n")
-
-
-def resolve_library_path(raw: str) -> Path:
-    return Path(os.path.expanduser(raw)).resolve()
+sys.path.insert(0, str(Path(__file__).parent))
+from _drift_common import (
+    TYPE_DIRS,
+    TYPE_EXTENSIONS,
+    DRIFT_MARKER,
+    MARKER_PATTERNS,
+    has_drift_marker,
+    sha256_file,
+    load_json,
+    save_json,
+    resolve_library_path,
+)
 
 
 def collect_artifacts(

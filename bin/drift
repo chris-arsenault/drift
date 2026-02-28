@@ -7,6 +7,10 @@
 #   drift self-update      Alias for upgrade
 #   drift install-skill    Install Claude Code skills to a project
 #   drift library          Manage the centralized drift artifact library
+#   drift plan             Build attack plan from manifest
+#   drift validate         Run quality gate checks on manifest
+#   drift verify           Verify guard artifacts (markers, ESLint, ADR)
+#   drift plan-update      Update plan state (finalize, check regressions)
 #   drift online           Enable auto-push/pull (library ops run transparently)
 #   drift offline          Disable auto-push/pull (manual library push/pull)
 #   drift ui               Launch the drift dashboard
@@ -694,6 +698,22 @@ case "$COMMAND" in
         ;;
     library)
         drift_library "$@"
+        ;;
+    plan)
+        _require_python3
+        exec "$_DRIFT_PY" "$DRIFT_HOME/scripts/plan-build.py" "$@"
+        ;;
+    validate)
+        _require_python3
+        exec "$_DRIFT_PY" "$DRIFT_HOME/scripts/audit-validate.py" "$@"
+        ;;
+    verify)
+        _require_python3
+        exec "$_DRIFT_PY" "$DRIFT_HOME/scripts/guard-verify.py" "$@"
+        ;;
+    plan-update)
+        _require_python3
+        exec "$_DRIFT_PY" "$DRIFT_HOME/scripts/plan-update.py" "$@"
         ;;
     online)
         drift_online "$@"
