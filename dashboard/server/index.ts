@@ -4,7 +4,7 @@ import { projectsRouter } from "./routes/projects.js";
 import { libraryRouter } from "./routes/library.js";
 
 const app = express();
-const port = parseInt(process.env.DRIFT_UI_PORT ?? "4170", 10);
+const port = parseInt(process.env.DRIFT_UI_PORT ?? "47017", 10);
 
 app.use(express.json());
 

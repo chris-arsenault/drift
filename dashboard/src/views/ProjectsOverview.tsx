@@ -10,6 +10,26 @@ import {
 
 export default function ProjectsOverview() {
   const projects = useDriftStore((s) => s.projects);
+  const loading = useDriftStore((s) => s.loading);
+  const error = useDriftStore((s) => s.error);
+
+  if (loading && projects.length === 0) {
+    return (
+      <div className="api-gate">
+        <div className="api-gate-spinner" />
+        <p>Loading projects&hellip;</p>
+      </div>
+    );
+  }
+
+  if (error && projects.length === 0) {
+    return (
+      <div className="api-gate">
+        <h2>Error</h2>
+        <p>{error}</p>
+      </div>
+    );
+  }
 
   const totalHigh = projects.reduce(
     (n, p) => n + (p.summary?.high_impact ?? 0),

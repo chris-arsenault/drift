@@ -297,7 +297,7 @@ drift_ui() {
         }
     fi
 
-    info "Starting drift dashboard at http://localhost:4170"
+    info "Starting drift dashboard at http://localhost:47018"
     cd "$dash_dir" && exec npm run dev
 }
 
@@ -321,16 +321,32 @@ drift_library() {
         status)
             drift_library_status "$@"
             ;;
+        commit)
+            drift_library_commit "$@"
+            ;;
+        remote)
+            drift_library_remote "$@"
+            ;;
+        remote-push)
+            drift_library_remote_push "$@"
+            ;;
+        remote-pull)
+            drift_library_remote_pull "$@"
+            ;;
         help|--help|-h)
             cat >&2 <<'USAGE'
 Usage: drift library <command>
 
 Commands:
-  init [path]    Initialize the drift artifact library (default: ~/.drift/library)
-  push           Push guard artifacts from current project to library
-  pull           Pull artifacts from library into current project
-  list           Show all artifacts in the library
-  status         Compare library artifacts vs current project
+  init [path]        Initialize the drift artifact library (default: ~/.drift/library)
+  push               Push guard artifacts from current project to library
+  pull               Pull artifacts from library into current project
+  list               Show all artifacts in the library
+  status             Compare library artifacts vs current project
+  commit             Stage all changes and commit to local git
+  remote [url]       Show or set the remote origin URL
+  remote-push        Push committed changes to remote
+  remote-pull        Pull latest changes from remote
 USAGE
             ;;
         *)
@@ -346,20 +362,25 @@ drift_library_init() {
 
     if [[ -d "$lib_path" ]] && [[ -f "$lib_path/library.json" ]]; then
         info "Library already exists at $lib_path"
-        return 0
-    fi
+    else
+        mkdir -p "$lib_path"/{rules/eslint,rules/ruff,rules/ast-grep,adr,patterns,checklists}
 
-    mkdir -p "$lib_path"/{rules/eslint,rules/ruff,rules/ast-grep,adr,patterns,checklists}
-
-    cat > "$lib_path/library.json" << 'INITEOF'
+        cat > "$lib_path/library.json" << 'INITEOF'
 {
   "version": 1,
   "artifacts": []
 }
 INITEOF
 
-    success "Initialized drift library at $lib_path"
-    info "Add artifacts with: drift library push (from a project)"
+        success "Initialized drift library at $lib_path"
+        info "Add artifacts with: drift library push (from a project)"
+    fi
+
+    # Git init (idempotent)
+    if [[ ! -d "$lib_path/.git" ]]; then
+        git -C "$lib_path" init -b main >/dev/null 2>&1
+        success "Initialized git repository in library"
+    fi
 }
 
 drift_library_push() {
@@ -400,6 +421,109 @@ drift_library_status() {
     local config_file
     config_file="$(_find_project_config)"
     exec "$_DRIFT_PY" "$DRIFT_HOME/scripts/library-status.py" "$config_file"
+}
+
+drift_library_commit() {
+    local lib_path="${1:-$HOME/.drift/library}"
+
+    if [[ ! -d "$lib_path/.git" ]]; then
+        error "Library is not a git repository."
+        error "Run 'drift library init' first."
+        exit 1
+    fi
+
+    git -C "$lib_path" add -A
+
+    if git -C "$lib_path" diff --cached --quiet; then
+        info "Nothing to commit — library is clean."
+        return 0
+    fi
+
+    local changed
+    changed="$(git -C "$lib_path" diff --cached --name-only | wc -l | tr -d ' ')"
+    local msg="Update library: ${changed} file(s) modified"
+
+    git -C "$lib_path" commit -m "$msg" >/dev/null
+    success "Committed: $msg"
+}
+
+drift_library_remote() {
+    local lib_path="$HOME/.drift/library"
+
+    if [[ ! -d "$lib_path/.git" ]]; then
+        error "Library is not a git repository."
+        error "Run 'drift library init' first."
+        exit 1
+    fi
+
+    local url="${1:-}"
+
+    if [[ -z "$url" ]]; then
+        local current
+        current="$(git -C "$lib_path" remote get-url origin 2>/dev/null || echo "")"
+        if [[ -n "$current" ]]; then
+            echo "origin: $current"
+        else
+            info "No remote configured."
+            info "Set one with: drift library remote <url>"
+        fi
+    else
+        if git -C "$lib_path" remote get-url origin &>/dev/null; then
+            git -C "$lib_path" remote set-url origin "$url"
+        else
+            git -C "$lib_path" remote add origin "$url"
+        fi
+        success "Remote origin set to: $url"
+    fi
+}
+
+drift_library_remote_push() {
+    local lib_path="$HOME/.drift/library"
+
+    if [[ ! -d "$lib_path/.git" ]]; then
+        error "Library is not a git repository."
+        exit 1
+    fi
+
+    if ! git -C "$lib_path" remote get-url origin &>/dev/null; then
+        error "No remote configured."
+        error "Set one with: drift library remote <url>"
+        exit 1
+    fi
+
+    info "Pushing to remote..."
+    local branch
+    branch="$(git -C "$lib_path" branch --show-current)"
+    if git -C "$lib_path" push -u origin "$branch" 2>&1; then
+        success "Pushed to remote."
+    else
+        error "Push failed. Check remote access and try again."
+        exit 1
+    fi
+}
+
+drift_library_remote_pull() {
+    local lib_path="$HOME/.drift/library"
+
+    if [[ ! -d "$lib_path/.git" ]]; then
+        error "Library is not a git repository."
+        exit 1
+    fi
+
+    if ! git -C "$lib_path" remote get-url origin &>/dev/null; then
+        error "No remote configured."
+        error "Set one with: drift library remote <url>"
+        exit 1
+    fi
+
+    info "Pulling from remote..."
+    if git -C "$lib_path" pull --ff-only 2>&1; then
+        success "Pulled from remote."
+    else
+        error "Pull failed. You may have local changes that conflict."
+        error "Run 'drift library commit' first, then retry."
+        exit 1
+    fi
 }
 
 # ---------------------------------------------------------------------------

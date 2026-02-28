@@ -6,12 +6,13 @@
  */
 
 import { create } from "zustand";
-import { apiGet } from "./api";
+import { apiGet, apiPost } from "./api";
 import type {
   ProjectSummary,
   ProjectDetail,
   LibraryData,
   ArtifactDetail,
+  LibraryGitStatus,
 } from "../types";
 
 // ── Store shape ─────────────────────────────────────────────────────────
@@ -22,10 +23,13 @@ export interface DriftStore {
   selectedProject: ProjectDetail | null;
   library: LibraryData | null;
   selectedArtifact: ArtifactDetail | null;
+  gitStatus: LibraryGitStatus | null;
 
   // Status
   loading: boolean;
   error: string | null;
+  gitLoading: boolean;
+  gitError: string | null;
 
   // Actions
   fetchProjects: () => Promise<void>;
@@ -33,6 +37,11 @@ export interface DriftStore {
   fetchLibrary: () => Promise<void>;
   fetchArtifact: (id: string) => Promise<void>;
   clearSelection: () => void;
+  fetchGitStatus: () => Promise<void>;
+  gitCommit: () => Promise<string>;
+  gitSetRemote: (url: string) => Promise<string>;
+  gitPush: () => Promise<string>;
+  gitPull: () => Promise<string>;
 }
 
 // ── Store ────────────────────────────────────────────────────────────────
@@ -43,10 +52,13 @@ export const useDriftStore = create<DriftStore>((set) => ({
   selectedProject: null,
   library: null,
   selectedArtifact: null,
+  gitStatus: null,
 
   // Status
   loading: false,
   error: null,
+  gitLoading: false,
+  gitError: null,
 
   // Actions
   fetchProjects: async () => {
@@ -103,5 +115,78 @@ export const useDriftStore = create<DriftStore>((set) => ({
 
   clearSelection: () => {
     set({ selectedProject: null, selectedArtifact: null, error: null });
+  },
+
+  // Git actions
+  fetchGitStatus: async () => {
+    set({ gitLoading: true, gitError: null });
+    try {
+      const data = await apiGet<LibraryGitStatus>("/library/git-status");
+      set({ gitStatus: data, gitLoading: false });
+    } catch (err) {
+      set({
+        gitError: (err as Error).message || "Failed to fetch git status",
+        gitLoading: false,
+      });
+    }
+  },
+
+  gitCommit: async () => {
+    set({ gitLoading: true, gitError: null });
+    try {
+      const data = await apiPost<{ message: string }>("/library/git-commit");
+      const status = await apiGet<LibraryGitStatus>("/library/git-status");
+      set({ gitStatus: status, gitLoading: false });
+      return data.message;
+    } catch (err) {
+      const msg = (err as Error).message || "Commit failed";
+      set({ gitError: msg, gitLoading: false });
+      return msg;
+    }
+  },
+
+  gitSetRemote: async (url: string) => {
+    set({ gitLoading: true, gitError: null });
+    try {
+      const data = await apiPost<{ message: string }>("/library/git-remote", { url });
+      const status = await apiGet<LibraryGitStatus>("/library/git-status");
+      set({ gitStatus: status, gitLoading: false });
+      return data.message;
+    } catch (err) {
+      const msg = (err as Error).message || "Failed to set remote";
+      set({ gitError: msg, gitLoading: false });
+      return msg;
+    }
+  },
+
+  gitPush: async () => {
+    set({ gitLoading: true, gitError: null });
+    try {
+      const data = await apiPost<{ message: string }>("/library/git-push");
+      const status = await apiGet<LibraryGitStatus>("/library/git-status");
+      set({ gitStatus: status, gitLoading: false });
+      return data.message;
+    } catch (err) {
+      const msg = (err as Error).message || "Push failed";
+      set({ gitError: msg, gitLoading: false });
+      return msg;
+    }
+  },
+
+  gitPull: async () => {
+    set({ gitLoading: true, gitError: null });
+    try {
+      const data = await apiPost<{ message: string }>("/library/git-pull");
+      const [status] = await Promise.all([
+        apiGet<LibraryGitStatus>("/library/git-status"),
+        apiGet<LibraryData>("/library").then((lib) => set({ library: lib })),
+      ]);
+      set({ gitStatus: status, gitLoading: false });
+      return data.message;
+    } catch (err) {
+      const msg = (err as Error).message || "Pull failed";
+      set({ gitError: msg, gitLoading: false });
+      return msg;
+    }
   },
 }));

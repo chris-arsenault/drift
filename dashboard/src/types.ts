@@ -130,3 +130,16 @@ export interface ArtifactDetail {
   artifact: LibraryArtifact;
   content: string | null;
 }
+
+// ── Library Git Status ──────────────────────────────────────────────────
+
+export interface LibraryGitStatus {
+  isGitRepo: boolean;
+  hasRemote: boolean;
+  remoteUrl: string | null;
+  branch: string | null;
+  isDirty: boolean;
+  commitCount: number;
+  ahead: number;
+  behind: number;
+}

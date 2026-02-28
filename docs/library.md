@@ -128,25 +128,53 @@ In online mode, the CLAUDE.md instructions tell Claude to:
 
 This happens silently as part of the pipeline — no confirmation prompts.
 
-## Team Sharing
+## Git Backing & Remote Sync
 
-The library directory is just files on disk. To share with a team:
+The library is optionally backed by git for version control and syncing between machines.
+
+### Initialize git
+
+`drift library init` automatically creates a git repo in the library. For existing libraries:
 
 ```bash
-cd ~/.drift/library
-git init
-git add -A
-git commit -m "Initial library"
-git remote add origin <url>
-git push -u origin main
+drift library init    # idempotent — adds .git if not present
 ```
 
-Team members clone the same repo to `~/.drift/library/`:
+### Commit changes
+
+After pushing artifacts to the library, commit them:
+
+```bash
+drift library commit   # stages all changes + commits with auto message
+```
+
+### Configure remote
+
+```bash
+drift library remote                              # show current remote
+drift library remote git@github.com:org/lib.git   # set origin
+```
+
+### Sync with remote
+
+```bash
+drift library remote-push   # push commits to origin
+drift library remote-pull   # pull from origin (fast-forward only)
+```
+
+### Dashboard
+
+The drift dashboard (`drift ui`) includes a git panel on the Library page for managing all of the above from the browser.
+
+### Manual clone
+
+To set up the library on a new machine from an existing remote:
+
 ```bash
 git clone <url> ~/.drift/library
 ```
 
-Then `drift library pull` and `drift library push` work normally. Use `git pull`/`git push` in the library directory to share updates.
+Then `drift library pull` and `drift library push` work normally.
 
 ## Artifact Types
 

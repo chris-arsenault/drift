@@ -68,7 +68,7 @@ projectsRouter.get("/", async (_req, res) => {
     );
 
     results.push({
-      name: manifest?.project_name ?? project.name,
+      name: project.name,
       path: project.path,
       lastRun: manifest?.generated ?? project.lastRun,
       staleness: computeStaleness(manifest?.generated ?? project.lastRun),

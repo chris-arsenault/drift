@@ -124,7 +124,7 @@ Manage the centralized drift artifact library. See [docs/library.md](library.md)
 
 Initialize the library directory. Default: `~/.drift/library`.
 
-Creates the directory structure and an empty `library.json` manifest.
+Creates the directory structure, an empty `library.json` manifest, and initializes a git repository.
 
 ### `drift library push`
 
@@ -145,6 +145,22 @@ Show all artifacts in the library, grouped by type.
 ### `drift library status`
 
 Compare library artifacts vs the current project. Shows which artifacts are in sync, which are newer in the library, which are newer in the project, and which haven't been synced.
+
+### `drift library commit`
+
+Stage all changes in the library and commit with an auto-generated message.
+
+### `drift library remote [url]`
+
+With no arguments, show the current remote origin URL. With a URL argument, set or update the origin.
+
+### `drift library remote-push`
+
+Push committed library changes to the remote origin.
+
+### `drift library remote-pull`
+
+Pull latest changes from the remote origin (fast-forward only).
 
 ## Environment Variables
 
