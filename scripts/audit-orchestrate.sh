@@ -252,12 +252,9 @@ _claude_call() {
 
     local exit_code=0
 
-    # stream-json outputs events in real-time.
-    # Always: pipe through stream-progress.py (filters to human-readable on stderr, raw JSON to log).
-    # Verbose: also pass --verbose to claude for turn-by-turn detail in the stream.
-    if [[ "${VERBOSE:-0}" -eq 1 ]]; then
-        cmd+=(--verbose)
-    fi
+    # stream-json requires --verbose with claude -p.
+    # stream-progress.py filters raw JSON to human-readable on stderr.
+    cmd+=(--verbose)
 
     echo "$user_prompt" | "${cmd[@]}" 2>&1 \
         | python3 -u "$DRIFT_HOME/scripts/stream-progress.py" "$LOG_FILE" || exit_code=$?

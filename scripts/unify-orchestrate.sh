@@ -145,9 +145,8 @@ _claude_call() {
 
     local exit_code=0
 
-    if [[ "${VERBOSE:-0}" -eq 1 ]]; then
-        cmd+=(--verbose)
-    fi
+    # stream-json requires --verbose with claude -p
+    cmd+=(--verbose)
 
     echo "$user_prompt" | "${cmd[@]}" 2>&1 \
         | python3 -u "$DRIFT_HOME/scripts/stream-progress.py" "$LOG_FILE" || exit_code=$?
