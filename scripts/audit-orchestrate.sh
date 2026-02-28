@@ -5,6 +5,15 @@
 # calls.  Each analytical step must produce specific artifacts before the next
 # step can begin.
 #
+# Workflow:
+#   Step 0: Library pull                              (deterministic)
+#   Step 1: Extract + feature extraction              (deterministic)
+#   Step 2: Purpose statements                        (claude -p)
+#   Step 3: Score + cluster (with purpose embeddings) (deterministic)
+#   Step 4: Structural + behavioral audit             (claude -p)
+#   Step 5: Cluster verification + semantic entries   (claude -p)
+#   Step 6: Validate manifest                         (deterministic)
+#
 # Usage:
 #   drift audit <project-root> [options]
 #
@@ -68,6 +77,15 @@ usage() {
 Usage: drift audit <project-root> [options]
 
 Run the full audit phase with deterministic gates between steps.
+
+Steps:
+  0  Library pull (if online)
+  1  Extract + feature extraction (no scoring yet)
+  2  Purpose statements (claude -p)
+  3  Score + cluster with purpose embeddings
+  4  Structural + behavioral audit (claude -p)
+  5  Cluster verification + semantic manifest entries (claude -p)
+  6  Validate manifest
 
 Options:
   --model <model>        Override Claude model for analytical steps
@@ -283,43 +301,132 @@ step_0_library_pull() {
     fi
 }
 
-step_1_pipeline() {
-    step_header 1 "Semantic Pipeline"
+step_1_extract() {
+    step_header 1 "Extract + Feature Extraction"
 
     if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
-        info "[DRY RUN] bash cli.sh run --project $PROJECT_ROOT"
+        info "[DRY RUN] extract → ast-grep → fingerprint → typesig → callgraph → depcontext"
         return 0
     fi
 
-    # Run from project root so relative OUTPUT_DIR resolves correctly
-    (cd "$PROJECT_ROOT" && bash "$DRIFT_HOME/cli.sh" run --project "$PROJECT_ROOT") 2>&1 | _log
+    # Extract code units
+    info "Extracting code units..."
+    (cd "$PROJECT_ROOT" && bash "$DRIFT_HOME/cli.sh" extract --project "$PROJECT_ROOT") 2>&1 | _log
 
     gate_file_exists "$CODE_UNITS" "code-units.json" || {
-        error "Pipeline failed: no code-units.json produced."
-        error "Run 'cd $PROJECT_ROOT && bash \$DRIFT_SEMANTIC/cli.sh run --project .' to diagnose."
+        error "Extraction failed: no code-units.json produced."
         exit 1
     }
-    gate_file_exists "$CLUSTERS" "clusters.json" || {
-        warn "clusters.json not produced — running stages individually..."
-        (cd "$PROJECT_ROOT" && \
-            bash "$DRIFT_HOME/cli.sh" fingerprint && \
-            bash "$DRIFT_HOME/cli.sh" typesig && \
-            bash "$DRIFT_HOME/cli.sh" callgraph && \
-            bash "$DRIFT_HOME/cli.sh" depcontext && \
-            bash "$DRIFT_HOME/cli.sh" score && \
-            bash "$DRIFT_HOME/cli.sh" cluster && \
-            bash "$DRIFT_HOME/cli.sh" css-extract --project "$PROJECT_ROOT" && \
-            bash "$DRIFT_HOME/cli.sh" css-score && \
-            bash "$DRIFT_HOME/cli.sh" report) 2>&1 | _log
-        gate_file_exists "$CLUSTERS" "clusters.json" || {
-            error "Pipeline failed even with individual stages."
-            exit 1
-        }
-    }
+
+    # ast-grep structural patterns (optional)
+    info "Running ast-grep..."
+    (cd "$PROJECT_ROOT" && bash "$DRIFT_HOME/cli.sh" ast-grep --project "$PROJECT_ROOT") 2>&1 | _log || warn "ast-grep failed (continuing)"
+
+    # Feature extraction stages — no scoring yet
+    info "Computing fingerprints..."
+    (cd "$PROJECT_ROOT" && bash "$DRIFT_HOME/cli.sh" fingerprint) 2>&1 | _log
+    info "Computing type signatures..."
+    (cd "$PROJECT_ROOT" && bash "$DRIFT_HOME/cli.sh" typesig) 2>&1 | _log
+    info "Computing call graph..."
+    (cd "$PROJECT_ROOT" && bash "$DRIFT_HOME/cli.sh" callgraph) 2>&1 | _log
+    info "Computing dependency context..."
+    (cd "$PROJECT_ROOT" && bash "$DRIFT_HOME/cli.sh" depcontext) 2>&1 | _log
+
+    local unit_count
+    unit_count="$(python3 -c "import json; d=json.load(open('$CODE_UNITS')); print(len(d.get('units',d)) if isinstance(d,dict) else len(d))" 2>/dev/null || echo "?")"
+    success "Extracted $unit_count code units with features. Ready for purpose statements."
 }
 
-step_2_structural_behavioral() {
-    step_header 2 "Structural + Behavioral Audit (Claude)"
+step_2_purpose_statements() {
+    step_header 2 "Purpose Statements (Claude)"
+
+    SESSION_SEMANTIC="$(_gen_uuid)"
+
+    local unit_count
+    unit_count="$(python3 -c "import json; d=json.load(open('$CODE_UNITS')); print(len(d.get('units',d)) if isinstance(d,dict) else len(d))" 2>/dev/null || echo "?")"
+
+    local prompt="You are writing purpose statements for code units in: $PROJECT_ROOT
+
+Artifacts from Step 1:
+- Code units ($unit_count): $CODE_UNITS
+
+YOUR TASK:
+1. Read $CODE_UNITS to understand the extracted units
+2. For every component and hook, read the actual source code
+3. Write a one-sentence purpose statement describing what each unit DOES functionally
+4. Purpose statements should capture the semantic intent, not just restate the name
+5. Cover ALL components and hooks at minimum — functions and constants if time allows
+6. Save to $PURPOSES as a JSON array of {\"unitId\": \"...\", \"purpose\": \"...\"}
+
+IMPORTANT:
+- Focus on functional purpose (\"renders a modal for bulk image tagging\") not structure (\"a React component\")
+- These statements will be embedded and used for semantic similarity scoring
+- Zero purpose statements is a failure — do not stop until the file is written
+- Do NOT run any pipeline commands or modify any other files
+
+Environment: DRIFT_SEMANTIC=$DRIFT_HOME
+
+DELIVERABLE:
+- $PURPOSES with purpose statements for all components/hooks"
+
+    _claude_call "purpose statements" \
+        "$DRIFT_HOME/skill/drift-audit-semantic/SKILL.md" \
+        "$prompt" \
+        "--session-id $SESSION_SEMANTIC"
+
+    gate_file_exists "$PURPOSES" "purpose-statements.json" || {
+        error "Step 2 failed: no purpose-statements.json produced"
+        error "Re-run: drift audit $PROJECT_ROOT --skip-to 2"
+        exit 1
+    }
+    gate_json_nonempty_array "$PURPOSES" "" "purpose statements" || {
+        error "Step 2 failed: purpose-statements.json is empty"
+        exit 1
+    }
+
+    local purpose_count
+    purpose_count="$(python3 -c "import json; print(len(json.load(open('$PURPOSES'))))" 2>/dev/null || echo "?")"
+    success "$purpose_count purpose statements written."
+}
+
+step_3_score_cluster() {
+    step_header 3 "Score + Cluster (with purpose embeddings)"
+
+    if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
+        info "[DRY RUN] ingest-purposes → embed → score → cluster → css-extract → css-score → report"
+        return 0
+    fi
+
+    info "Ingesting purpose statements..."
+    (cd "$PROJECT_ROOT" && bash "$DRIFT_HOME/cli.sh" ingest-purposes --file "$PURPOSES") 2>&1 | _log
+    info "Embedding purpose statements..."
+    (cd "$PROJECT_ROOT" && bash "$DRIFT_HOME/cli.sh" embed) 2>&1 | _log
+    info "Scoring pairwise similarity..."
+    (cd "$PROJECT_ROOT" && bash "$DRIFT_HOME/cli.sh" score) 2>&1 | _log
+    info "Clustering..."
+    (cd "$PROJECT_ROOT" && bash "$DRIFT_HOME/cli.sh" cluster) 2>&1 | _log
+    info "Extracting CSS units..."
+    (cd "$PROJECT_ROOT" && bash "$DRIFT_HOME/cli.sh" css-extract --project "$PROJECT_ROOT") 2>&1 | _log
+    info "Scoring CSS similarity..."
+    (cd "$PROJECT_ROOT" && bash "$DRIFT_HOME/cli.sh" css-score) 2>&1 | _log
+    info "Generating report..."
+    (cd "$PROJECT_ROOT" && bash "$DRIFT_HOME/cli.sh" report --manifest "$MANIFEST_PATH") 2>&1 | _log || {
+        # report may fail if manifest doesn't exist yet — that's OK, step 4 creates it
+        (cd "$PROJECT_ROOT" && bash "$DRIFT_HOME/cli.sh" report) 2>&1 | _log || warn "Report generation failed (continuing)"
+    }
+
+    gate_file_exists "$CLUSTERS" "clusters.json" || {
+        error "Step 3 failed: no clusters.json produced"
+        exit 1
+    }
+
+    local cluster_count
+    cluster_count="$(python3 -c "import json; print(len(json.load(open('$CLUSTERS'))))" 2>/dev/null || echo "?")"
+    success "$cluster_count clusters found (purpose-informed scoring)."
+}
+
+step_4_structural_behavioral() {
+    step_header 4 "Structural + Behavioral Audit (Claude)"
 
     # Check for re-audit
     if [[ -f "$MANIFEST" ]]; then
@@ -344,7 +451,7 @@ step_2_structural_behavioral() {
 
 The semantic pipeline has already run and produced:
 - Code units ($unit_count units): $CODE_UNITS
-- Clusters ($cluster_count clusters): $CLUSTERS
+- Clusters ($cluster_count clusters, purpose-informed): $CLUSTERS
 - Report: $SEMANTIC_DIR/semantic-drift-report.md
 
 YOUR TASK:
@@ -372,31 +479,31 @@ DELIVERABLES (must exist when done):
     rm -f "$combined_skill"
 
     gate_file_exists "$MANIFEST" "drift-manifest.json" || {
-        error "Step 2 failed: no drift-manifest.json produced"
-        error "Re-run: drift audit $PROJECT_ROOT --skip-to 2"
+        error "Step 4 failed: no drift-manifest.json produced"
+        error "Re-run: drift audit $PROJECT_ROOT --skip-to 4"
         exit 1
     }
     gate_json_nonempty_array "$MANIFEST" "areas" "manifest areas" || {
-        error "Step 2 failed: manifest has no areas"
+        error "Step 4 failed: manifest has no areas"
         exit 1
     }
 }
 
-step_3_semantic() {
-    step_header 3 "Semantic Audit — Clusters + Purpose Statements (Claude)"
+step_5_cluster_verification() {
+    step_header 5 "Cluster Verification + Semantic Manifest Entries (Claude)"
 
-    SESSION_SEMANTIC="$(_gen_uuid)"
-
-    local unit_count cluster_count
-    unit_count="$(python3 -c "import json; d=json.load(open('$CODE_UNITS')); print(len(d.get('units',d)) if isinstance(d,dict) else len(d))" 2>/dev/null || echo "?")"
+    local cluster_count
     cluster_count="$(python3 -c "import json; print(len(json.load(open('$CLUSTERS'))))" 2>/dev/null || echo "?")"
 
-    local prompt="You are running a semantic drift audit on: $PROJECT_ROOT
+    local prompt="You are verifying semantic clusters and adding findings for: $PROJECT_ROOT
 
-Artifacts from earlier steps:
-- Code units ($unit_count): $CODE_UNITS
-- Clusters ($cluster_count): $CLUSTERS
-- Existing manifest: $MANIFEST
+These clusters were scored WITH purpose statement embeddings — they are
+semantically informed, not just structurally similar.
+
+CONTEXT:
+- Clusters ($cluster_count, purpose-informed): $CLUSTERS
+- Purpose statements: $PURPOSES
+- Current manifest: $MANIFEST
 
 PHASE 1 — VERIFY CLUSTERS (mandatory):
 1. Read $CLUSTERS
@@ -405,90 +512,11 @@ PHASE 1 — VERIFY CLUSTERS (mandatory):
 4. Include code_excerpts (5-15 lines) for each member in your verdicts
 5. Write verdicts to $FINDINGS (JSON array)
 
-PHASE 2 — PURPOSE STATEMENTS (mandatory — do NOT skip):
-1. Read $CODE_UNITS
-2. For every component and hook, read the source code
-3. Write a one-sentence purpose statement describing what each unit DOES functionally
-4. Cover ALL components and hooks at minimum
-5. Save to $PURPOSES as JSON array of {\"unitId\": \"...\", \"purpose\": \"...\"}
-
-Environment: DRIFT_SEMANTIC=$DRIFT_HOME
-
-DELIVERABLES (both must exist when done):
-- $FINDINGS with cluster verdicts
-- $PURPOSES with purpose statements for all components/hooks
-
-Zero purpose statements is a failure. Do not stop until both files are written."
-
-    _claude_call "semantic audit" \
-        "$DRIFT_HOME/skill/drift-audit-semantic/SKILL.md" \
-        "$prompt" \
-        "--session-id $SESSION_SEMANTIC"
-
-    gate_file_exists "$FINDINGS" "findings.json" || {
-        error "Step 3 failed: no findings.json produced"
-        error "Re-run: drift audit $PROJECT_ROOT --skip-to 3"
-        exit 1
-    }
-    gate_file_exists "$PURPOSES" "purpose-statements.json" || {
-        error "Step 3 failed: no purpose-statements.json produced"
-        error "This is the most commonly skipped artifact."
-        error "Re-run: drift audit $PROJECT_ROOT --skip-to 3"
-        exit 1
-    }
-    gate_json_nonempty_array "$PURPOSES" "" "purpose statements" || {
-        error "Step 3 failed: purpose-statements.json is empty"
-        exit 1
-    }
-}
-
-step_4_rerun_pipeline() {
-    step_header 4 "Re-run Pipeline with Purpose Statements"
-
-    if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
-        info "[DRY RUN] ingest-purposes → embed → score → cluster → report"
-        return 0
-    fi
-
-    info "Ingesting purpose statements..."
-    (cd "$PROJECT_ROOT" && bash "$DRIFT_HOME/cli.sh" ingest-purposes --file "$PURPOSES") 2>&1 | _log
-    info "Embedding..."
-    (cd "$PROJECT_ROOT" && bash "$DRIFT_HOME/cli.sh" embed) 2>&1 | _log
-    info "Re-scoring..."
-    (cd "$PROJECT_ROOT" && bash "$DRIFT_HOME/cli.sh" score) 2>&1 | _log
-    info "Re-clustering..."
-    (cd "$PROJECT_ROOT" && bash "$DRIFT_HOME/cli.sh" cluster) 2>&1 | _log
-    info "Re-generating report..."
-    (cd "$PROJECT_ROOT" && bash "$DRIFT_HOME/cli.sh" report) 2>&1 | _log
-
-    gate_file_exists "$CLUSTERS" "updated clusters.json" || {
-        error "Step 4 failed: re-run did not produce updated clusters"
-        exit 1
-    }
-}
-
-step_5_review_refined() {
-    step_header 5 "Review Refined Clusters + Semantic Manifest Entries (Claude)"
-
-    local cluster_count
-    cluster_count="$(python3 -c "import json; print(len(json.load(open('$CLUSTERS'))))" 2>/dev/null || echo "?")"
-
-    local prompt="You are reviewing REFINED semantic clusters for: $PROJECT_ROOT
-
-The pipeline was re-run with purpose statement embeddings.
-
-CONTEXT:
-- Updated clusters ($cluster_count): $CLUSTERS
-- Your previous findings: $FINDINGS
-- Your purpose statements: $PURPOSES
-- Current manifest: $MANIFEST
-
-INSTRUCTIONS:
-1. Read the updated $CLUSTERS
-2. Compare with your previous $FINDINGS — note new clusters or rank changes
-3. For each DUPLICATE or OVERLAPPING cluster, add a type:semantic entry to $MANIFEST
-4. Each semantic entry MUST include code_excerpts and reference the purpose statements that reveal the duplication
-5. Update the manifest summary counts after adding entries
+PHASE 2 — ADD SEMANTIC MANIFEST ENTRIES:
+1. For each DUPLICATE or OVERLAPPING cluster, add a type:semantic entry to $MANIFEST
+2. Each semantic entry MUST include code_excerpts and reference the purpose statements
+   that reveal the duplication
+3. Update the manifest summary counts after adding entries
 
 Do NOT duplicate existing manifest entries. Only add NEW semantic findings.
 Do NOT remove or modify structural/behavioral entries.
@@ -496,12 +524,19 @@ Do NOT remove or modify structural/behavioral entries.
 Environment: DRIFT_SEMANTIC=$DRIFT_HOME
 
 DELIVERABLES:
+- $FINDINGS with cluster verdicts
 - $MANIFEST updated with type:semantic entries"
 
-    _claude_call "review refined clusters" \
+    _claude_call "cluster verification" \
         "$DRIFT_HOME/skill/drift-audit-semantic/SKILL.md" \
         "$prompt" \
         "--resume $SESSION_SEMANTIC"
+
+    gate_file_exists "$FINDINGS" "findings.json" || {
+        error "Step 5 failed: no findings.json produced"
+        error "Re-run: drift audit $PROJECT_ROOT --skip-to 5"
+        exit 1
+    }
 
     # Soft gate — warn but don't fail
     if ! gate_manifest_has_type "$MANIFEST" "semantic"; then
@@ -584,6 +619,7 @@ PROJECT_ROOT="$(cd "$PROJECT_ROOT" && pwd)"
 AUDIT_DIR="$PROJECT_ROOT/.drift-audit"
 SEMANTIC_DIR="$AUDIT_DIR/semantic"
 MANIFEST="$AUDIT_DIR/drift-manifest.json"
+MANIFEST_PATH="$MANIFEST"
 FINDINGS="$SEMANTIC_DIR/findings.json"
 PURPOSES="$SEMANTIC_DIR/purpose-statements.json"
 CLUSTERS="$SEMANTIC_DIR/clusters.json"
@@ -628,26 +664,33 @@ echo "" >&2
 
 # Verify skip-to gates
 if [[ "$SKIP_TO" -ge 2 ]]; then
-    info "Verifying gates for steps 0-1..."
+    info "Verifying gates for step 1..."
     gate_file_exists "$CODE_UNITS" "code-units.json" || exit 1
-    gate_file_exists "$CLUSTERS" "clusters.json" || exit 1
 fi
 if [[ "$SKIP_TO" -ge 3 ]]; then
     info "Verifying gates for step 2..."
-    gate_file_exists "$MANIFEST" "drift-manifest.json" || exit 1
-    gate_json_nonempty_array "$MANIFEST" "areas" "manifest areas" || exit 1
+    gate_file_exists "$PURPOSES" "purpose-statements.json" || exit 1
+    gate_json_nonempty_array "$PURPOSES" "" "purpose statements" || exit 1
 fi
 if [[ "$SKIP_TO" -ge 4 ]]; then
     info "Verifying gates for step 3..."
+    gate_file_exists "$CLUSTERS" "clusters.json" || exit 1
+fi
+if [[ "$SKIP_TO" -ge 5 ]]; then
+    info "Verifying gates for step 4..."
+    gate_file_exists "$MANIFEST" "drift-manifest.json" || exit 1
+    gate_json_nonempty_array "$MANIFEST" "areas" "manifest areas" || exit 1
+fi
+if [[ "$SKIP_TO" -ge 6 ]]; then
+    info "Verifying gates for step 5..."
     gate_file_exists "$FINDINGS" "findings.json" || exit 1
-    gate_file_exists "$PURPOSES" "purpose-statements.json" || exit 1
 fi
 
 # Run steps
 [[ "$SKIP_TO" -le 0 ]] && step_0_library_pull
-[[ "$SKIP_TO" -le 1 ]] && step_1_pipeline
-[[ "$SKIP_TO" -le 2 ]] && step_2_structural_behavioral
-[[ "$SKIP_TO" -le 3 ]] && step_3_semantic
-[[ "$SKIP_TO" -le 4 ]] && step_4_rerun_pipeline
-[[ "$SKIP_TO" -le 5 ]] && step_5_review_refined
+[[ "$SKIP_TO" -le 1 ]] && step_1_extract
+[[ "$SKIP_TO" -le 2 ]] && step_2_purpose_statements
+[[ "$SKIP_TO" -le 3 ]] && step_3_score_cluster
+[[ "$SKIP_TO" -le 4 ]] && step_4_structural_behavioral
+[[ "$SKIP_TO" -le 5 ]] && step_5_cluster_verification
 [[ "$SKIP_TO" -le 6 ]] && step_6_validate
