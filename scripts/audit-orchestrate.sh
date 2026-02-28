@@ -11,7 +11,7 @@
 # Options:
 #   --model <model>        Override Claude model for analytical steps
 #   --skip-to <N>          Skip to step N (verifies prior gates)
-#   --max-budget <USD>     Max budget per Claude call (default: 5.00)
+#   --max-turns <N>        Max agentic turns per Claude call (default: 200)
 #   --verbose              Show full Claude -p output
 #   --dry-run              Print what would run without executing
 
@@ -47,7 +47,7 @@ Run the full audit phase with deterministic gates between steps.
 Options:
   --model <model>        Override Claude model for analytical steps
   --skip-to <N>          Skip to step N (verifies prior gates pass)
-  --max-budget <USD>     Max budget per Claude -p call (default: 5.00)
+  --max-turns <N>        Max agentic turns per Claude call (default: 200)
   --verbose              Show full Claude -p output
   --dry-run              Print what would run without executing
   -h, --help             Show this help
@@ -179,7 +179,7 @@ _claude_call() {
     fi
 
     cmd+=(--permission-mode acceptEdits)
-    cmd+=(--max-budget-usd "${MAX_BUDGET:-5.00}")
+    cmd+=(--max-turns "${MAX_TURNS:-200}")
     cmd+=(--allowedTools "Read,Glob,Grep,Bash,Write,Edit,Agent")
     cmd+=(--add-dir "$PROJECT_ROOT")
 
@@ -189,7 +189,7 @@ _claude_call() {
         info "[DRY RUN] claude -p $session_flag"
         info "[DRY RUN]   --append-system-prompt <${system_prompt_file:-none}>"
         info "[DRY RUN]   --permission-mode acceptEdits"
-        info "[DRY RUN]   --max-budget-usd ${MAX_BUDGET:-5.00}"
+        info "[DRY RUN]   --max-turns ${MAX_TURNS:-200}"
         info "[DRY RUN]   --allowedTools Read,Glob,Grep,Bash,Write,Edit,Agent"
         info "[DRY RUN]   prompt: $(echo "$user_prompt" | head -3)..."
         return 0
@@ -510,7 +510,7 @@ step_6_validate() {
 PROJECT_ROOT=""
 MODEL=""
 SKIP_TO=0
-MAX_BUDGET="5.00"
+MAX_TURNS="200"
 VERBOSE=0
 DRY_RUN=0
 
@@ -518,7 +518,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --model)      MODEL="$2"; shift 2 ;;
         --skip-to)    SKIP_TO="$2"; shift 2 ;;
-        --max-budget) MAX_BUDGET="$2"; shift 2 ;;
+        --max-turns)  MAX_TURNS="$2"; shift 2 ;;
         --verbose)    VERBOSE=1; shift ;;
         --dry-run)    DRY_RUN=1; shift ;;
         -h|--help)    usage; exit 0 ;;
