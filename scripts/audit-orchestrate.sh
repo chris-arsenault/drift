@@ -12,7 +12,6 @@
 #   --model <model>        Override Claude model for analytical steps
 #   --skip-to <N>          Skip to step N (verifies prior gates)
 #   --max-turns <N>        Max agentic turns per Claude call (default: 200)
-#   --verbose              Show full Claude -p output
 #   --dry-run              Print what would run without executing
 
 set -euo pipefail
@@ -48,7 +47,6 @@ Options:
   --model <model>        Override Claude model for analytical steps
   --skip-to <N>          Skip to step N (verifies prior gates pass)
   --max-turns <N>        Max agentic turns per Claude call (default: 200)
-  --verbose              Show full Claude -p output
   --dry-run              Print what would run without executing
   -h, --help             Show this help
 USAGE
@@ -196,17 +194,13 @@ _claude_call() {
         return 0
     fi
 
-    # Log all claude output; show on terminal only in verbose mode
     local safe_name="${step_name// /-}"
     local log_file="$AUDIT_DIR/claude-${safe_name}.log"
     mkdir -p "$AUDIT_DIR"
     local exit_code=0
 
-    if [[ "${VERBOSE:-0}" -eq 1 ]]; then
-        echo "$user_prompt" | "${cmd[@]}" 2>&1 | tee "$log_file" || exit_code=$?
-    else
-        echo "$user_prompt" | "${cmd[@]}" > "$log_file" 2>&1 || exit_code=$?
-    fi
+    # Always stream to terminal + log file
+    echo "$user_prompt" | "${cmd[@]}" 2>&1 | tee "$log_file" || exit_code=$?
 
     [[ -n "$sys_prompt_tmpfile" ]] && rm -f "$sys_prompt_tmpfile"
 
@@ -514,7 +508,6 @@ PROJECT_ROOT=""
 MODEL=""
 SKIP_TO=0
 MAX_TURNS="200"
-VERBOSE=0
 DRY_RUN=0
 
 while [[ $# -gt 0 ]]; do
@@ -522,7 +515,6 @@ while [[ $# -gt 0 ]]; do
         --model)      MODEL="$2"; shift 2 ;;
         --skip-to)    SKIP_TO="$2"; shift 2 ;;
         --max-turns)  MAX_TURNS="$2"; shift 2 ;;
-        --verbose)    VERBOSE=1; shift ;;
         --dry-run)    DRY_RUN=1; shift ;;
         -h|--help)    usage; exit 0 ;;
         *)

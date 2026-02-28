@@ -67,7 +67,6 @@ Options:
 - `--model <model>` — override the Claude model for analytical steps
 - `--skip-to <N>` — resume from step N (verifies prior gates)
 - `--max-turns <N>` — max agentic turns per Claude call (default: 200)
-- `--verbose` — show full Claude output
 - `--dry-run` — print what would run without executing
 
 Wait for the audit to complete before proceeding to the Plan phase.
