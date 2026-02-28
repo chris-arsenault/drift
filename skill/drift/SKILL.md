@@ -442,15 +442,22 @@ If any area has NO enforceable rule, explain specifically why to the user.
 
 ### Step 3: Generate Documentation for ALL Areas
 
-Only after all rules are wired and verified:
+Only after all rules are wired and verified.
 
-**a. Write an ADR** for each area — the ADR's Enforcement section MUST reference
-the specific rule names created in Step 1.
+**Every markdown file you create MUST start with `<!-- drift-generated -->` on line 1.**
+Files without this marker won't sync to the library. This applies to ADRs, pattern docs,
+and checklists — no exceptions.
 
-**b. Write/update pattern guide** — practical usage guide in `docs/patterns/`.
+**a. Write an ADR** for each area — first line `<!-- drift-generated -->`, then the
+ADR content. The Enforcement section MUST reference the specific rule names created
+in Step 1.
 
-**c. Update review checklist** — drift-specific items covering what lint rules
-cannot catch (semantic correctness, architectural intent, edge cases).
+**b. Write/update pattern guide** — first line `<!-- drift-generated -->`, then
+practical usage guide in `docs/patterns/`.
+
+**c. Update review checklist** — first line `<!-- drift-generated -->`, then
+drift-specific items covering what lint rules cannot catch (semantic correctness,
+architectural intent, edge cases).
 
 ### Step 4: Update Plan and Summarize
 
@@ -467,7 +474,18 @@ Present consolidated summary:
 - Pattern docs written
 - Recommended rollout (warn → fix → error → CI)
 
-### Step 5: Verify ESLint Integration
+### Step 5: Verify Drift Markers
+
+Before any library push, verify every generated file has the correct drift marker.
+Run the verification check from the guard skill's "Verify Drift Markers" section.
+
+If any files are missing their marker, **fix them now** — add the appropriate marker
+(`<!-- drift-generated -->` for `.md`, `// drift-generated` for `.js`/`.ts`,
+`# drift-generated` for `.yml`/`.yaml`) as the first line.
+
+This step is mandatory. Do not proceed to library push with missing markers.
+
+### Step 6: Verify ESLint Integration
 
 After generating all guard artifacts, verify that ESLint rules are actually wired into the
 project's config. Rules that aren't referenced have zero effect.
@@ -509,7 +527,7 @@ project's config. Rules that aren't referenced have zero effect.
    npx eslint src/ --format compact 2>/dev/null | grep -c "Warning\|Error" || echo "0 violations"
    ```
 
-### Step 6: Verify ADR Enforcement
+### Step 7: Verify ADR Enforcement
 
 Cross-reference ADRs with their declared enforcement mechanisms to detect enforcement decay.
 
@@ -555,9 +573,12 @@ When invoked with no phase argument, run all phases in sequence:
 2. **Plan** — prioritize and present to user for approval/reordering
 3. **Unify** — resolve all planned areas autonomously
 4. **Guard** — generate enforcement for all unified areas
-5. **Library Push** — if `.drift-audit/config.json` has `"mode": "online"`, run
-   `drift library push` to share guard artifacts to the centralized library
-6. **Summary** — present full pipeline results
+5. **Verify Markers** — run the marker verification check from the guard skill to
+   confirm every generated file has its drift marker. Fix any missing markers.
+6. **Library Push** — if `.drift-audit/config.json` has `"mode": "online"`, run
+   `drift library push` to share guard artifacts to the centralized library.
+   Check the push output for skipped files — any skipped file is a bug to fix.
+7. **Summary** — present full pipeline results
 
 The plan phase is the one human checkpoint in the full pipeline. After the user
 approves the plan, unify and guard run autonomously with a summary at the end.

@@ -104,6 +104,8 @@ def collect_artifacts(
     artifacts: list[dict] = []
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
+    skipped: list[tuple[str, str]] = []  # (type, filename) — files missing marker
+
     for art_type, rel_dir in sync_map.items():
         if art_type not in TYPE_DIRS:
             print(f"  [!] Unknown artifact type '{art_type}' in config — skipping", file=sys.stderr)
@@ -121,6 +123,7 @@ def collect_artifacts(
             if extensions and entry.suffix not in extensions:
                 continue
             if not has_drift_marker(entry):
+                skipped.append((art_type, str(entry.relative_to(project_root))))
                 continue
 
             art_id = entry.stem
@@ -139,6 +142,13 @@ def collect_artifacts(
                     "_src_path": str(entry),
                 }
             )
+
+    if skipped:
+        print(f"\n[!] {len(skipped)} file(s) skipped — missing drift-generated marker:", file=sys.stderr)
+        for art_type, rel_path in skipped:
+            marker = MARKER_PATTERNS.get(Path(rel_path).suffix, DRIFT_MARKER)
+            print(f"    {rel_path}  (add '{marker}' as the first line)", file=sys.stderr)
+        print(file=sys.stderr)
 
     return artifacts
 

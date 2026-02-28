@@ -29,6 +29,24 @@ silently skip to documentation.
 codebase, read the unification log, understand what was decided and why, then create enforcement
 that matches.
 
+## CRITICAL: Drift Marker Requirement
+
+**Every file you create or modify MUST include the correct drift marker on the FIRST LINE.**
+Files without this marker are invisible to `drift library push` — they won't sync, won't
+appear in the dashboard, and the user won't know they exist.
+
+| File type | Required first line |
+|-----------|-------------------|
+| `.js`, `.cjs`, `.mjs`, `.ts` | `// drift-generated` |
+| `.yml`, `.yaml` | `# drift-generated` |
+| `.md` | `<!-- drift-generated -->` |
+
+**This applies to ALL generated files:** ESLint rules, ast-grep rules, ADRs, pattern docs,
+checklists, review templates — everything. No exceptions.
+
+If you are editing an existing file that already has content on line 1, prepend the marker
+as a new first line.
+
 ## Prerequisites
 
 The drift tool must be installed (`$DRIFT_SEMANTIC` set). If not, see the drift installation
@@ -73,16 +91,9 @@ Ask the user which unified patterns to guard. If a unification log exists, use i
 For each drift area, you MUST produce at least one machine-enforceable protection. Work through
 these mechanisms in order — use the first one that fits, and use multiple when possible.
 
-**Drift marker (required):** Every generated file must include a drift marker so the library
-tooling can distinguish drift artifacts from pre-existing project files:
-- JavaScript/TypeScript files (`.js`, `.ts`, etc.): add `// drift-generated` on the first line
-- YAML files: add `# drift-generated` on the first line
-- Markdown files (`.md`): add `<!-- drift-generated -->` on the first line
-
-The marker must appear within the first 5 lines of the file. Files without this marker
-will not be picked up by `drift library push`.
-
 ### 1. ESLint Rules
+
+**First line of every `.js`/`.ts` rule file:** `// drift-generated`
 
 Read `$DRIFT_SEMANTIC/skill/drift-guard/references/eslint-rule-patterns.md` for the mechanical
 details of writing rules. The WHAT to enforce comes from the codebase, not from that reference.
@@ -134,6 +145,8 @@ For the project's ESLint config format, see
 | Mixed fetch patterns | `no-restricted-imports` for raw `fetch`; `no-restricted-syntax` for direct `axios` calls |
 
 ### 2. ast-grep Rules (if project uses ast-grep)
+
+**First line of every `.yml`/`.yaml` rule file:** `# drift-generated`
 
 If the project has `sg` (ast-grep) configured, generate YAML pattern rules for structural
 enforcement. ast-grep catches patterns that ESLint selectors struggle with:
@@ -229,6 +242,8 @@ from Phase 1.
 
 ### 5. Architecture Decision Records
 
+**First line of every ADR:** `<!-- drift-generated -->`
+
 Create an ADR for each significant unification decision. See
 `$DRIFT_SEMANTIC/skill/drift-guard/references/adr-template.md` for the template.
 
@@ -254,6 +269,8 @@ Save ADRs to `docs/adr/` (or wherever the project keeps documentation). Number s
 
 ### 6. Pattern Usage Guides
 
+**First line of every pattern doc:** `<!-- drift-generated -->`
+
 For each unified area, ensure a usage guide exists that shows developers how to follow the
 canonical pattern. These should be practical, copy-paste-ready documents.
 
@@ -261,6 +278,8 @@ If drift-unify already created pattern docs, review and enhance them. If not, cr
 by reading the canonical implementation and writing a usage guide.
 
 ### 7. Review Checklist
+
+**First line of every checklist file:** `<!-- drift-generated -->`
 
 Generate or update a PR review checklist that includes drift-prevention items. Match the
 format the project already uses (GitHub PR template, CONTRIBUTING.md, or standalone doc).
@@ -328,6 +347,55 @@ actually exists:
 
 If any referenced artifact doesn't exist yet, create it before writing the ADR.
 An ADR's enforcement section must never reference artifacts that don't exist.
+
+### Verify Drift Markers
+
+**Before any library push, verify that every generated file has its drift marker.**
+This is not optional. Run this check and fix any failures:
+
+```bash
+# Check all sync directories from config for files missing the drift marker
+CONFIG="$PROJECT_ROOT/.drift-audit/config.json"
+python3 -c "
+import json, sys
+from pathlib import Path
+
+config = json.load(open('$CONFIG'))
+project = Path('$PROJECT_ROOT')
+MARKER = 'drift-generated'
+EXT_MAP = {'.md': '<!-- drift-generated -->', '.js': '// drift-generated',
+           '.ts': '// drift-generated', '.yml': '# drift-generated',
+           '.yaml': '# drift-generated'}
+EXTS = {
+    'eslint-rule': {'.js','.cjs','.mjs','.ts'}, 'adr': {'.md'},
+    'pattern': {'.md'}, 'checklist': {'.md'},
+    'ast-grep-rule': {'.yml','.yaml'}, 'ruff-rule': {'.py','.toml'},
+}
+
+missing = []
+for art_type, rel_dir in config.get('sync', {}).items():
+    src = project / rel_dir
+    if not src.is_dir(): continue
+    exts = EXTS.get(art_type, set())
+    for f in sorted(src.iterdir()):
+        if not f.is_file() or (exts and f.suffix not in exts): continue
+        with open(f) as fh:
+            head = ''.join(next(fh, '') for _ in range(5))
+        if MARKER not in head:
+            missing.append((art_type, str(f.relative_to(project)), EXT_MAP.get(f.suffix, MARKER)))
+
+if missing:
+    print(f'FAIL: {len(missing)} file(s) missing drift marker:')
+    for t, p, m in missing:
+        print(f'  {p}  — add \"{m}\" as line 1')
+    sys.exit(1)
+else:
+    print(f'OK: all files in sync directories have drift markers')
+"
+```
+
+**If any files are missing the marker, add it now before proceeding.** Do not push without
+markers — the files will be silently excluded from the library.
 
 ### Library Push
 
