@@ -12,7 +12,7 @@
 #   --model <model>        Override Claude model for analytical steps
 #   --skip-to <N>          Skip to step N (verifies prior gates)
 #   --max-turns <N>        Max agentic turns per Claude call (default: 200)
-#   --verbose              Stream all output to terminal (always logged to .drift-audit/audit.log)
+#   --verbose              Stream all output to terminal (always logged to audit.log)
 #   --dry-run              Print what would run without executing
 
 set -euo pipefail
@@ -30,13 +30,38 @@ else
     _R='' _G='' _Y='' _B='' _RED='' _BOLD=''
 fi
 
-step_header() { printf "\n${_BOLD}${_B}=== STEP %s: %s ===${_R}\n" "$1" "$2" >&2; }
-gate_pass()   { printf "${_G}  GATE: %s${_R}\n" "$*" >&2; }
-gate_fail()   { printf "${_RED}  GATE FAILED: %s${_R}\n" "$*" >&2; }
-info()        { printf "${_B}[*]${_R} %s\n" "$*" >&2; }
-success()     { printf "${_G}[+]${_R} %s\n" "$*" >&2; }
-warn()        { printf "${_Y}[!]${_R} %s\n" "$*" >&2; }
-error()       { printf "${_RED}[-]${_R} %s\n" "$*" >&2; }
+# All status messages go to terminal (stderr) AND log file if available.
+_to_log() { [[ -n "${LOG_FILE:-}" ]] && printf "%s\n" "$*" >> "$LOG_FILE"; }
+
+step_header() {
+    local msg="=== STEP $1: $2 ==="
+    printf "\n${_BOLD}${_B}%s${_R}\n" "$msg" >&2
+    _to_log ""; _to_log "$msg"
+}
+gate_pass() {
+    printf "${_G}  GATE: %s${_R}\n" "$*" >&2
+    _to_log "  GATE: $*"
+}
+gate_fail() {
+    printf "${_RED}  GATE FAILED: %s${_R}\n" "$*" >&2
+    _to_log "  GATE FAILED: $*"
+}
+info() {
+    printf "${_B}[*]${_R} %s\n" "$*" >&2
+    _to_log "[*] $*"
+}
+success() {
+    printf "${_G}[+]${_R} %s\n" "$*" >&2
+    _to_log "[+] $*"
+}
+warn() {
+    printf "${_Y}[!]${_R} %s\n" "$*" >&2
+    _to_log "[!] $*"
+}
+error() {
+    printf "${_RED}[-]${_R} %s\n" "$*" >&2
+    _to_log "[-] $*"
+}
 
 usage() {
     cat >&2 <<'USAGE'
@@ -48,7 +73,7 @@ Options:
   --model <model>        Override Claude model for analytical steps
   --skip-to <N>          Skip to step N (verifies prior gates pass)
   --max-turns <N>        Max agentic turns per Claude call (default: 200)
-  --verbose              Stream all output to terminal (always logged)
+  --verbose              Stream all output to terminal (always logged to audit.log)
   --dry-run              Print what would run without executing
   -h, --help             Show this help
 USAGE
@@ -207,7 +232,17 @@ _claude_call() {
 
     local exit_code=0
 
-    echo "$user_prompt" | "${cmd[@]}" 2>&1 | _log || exit_code=$?
+    if [[ "${VERBOSE:-0}" -eq 1 ]]; then
+        # Verbose: stream everything to terminal + log
+        echo "$user_prompt" | "${cmd[@]}" --verbose 2>&1 | tee -a "$LOG_FILE" || exit_code=$?
+    else
+        # Non-verbose: output to log only, heartbeat on terminal
+        (while true; do sleep 15; printf "." >&2; done) &
+        local heartbeat_pid=$!
+        echo "$user_prompt" | "${cmd[@]}" >> "$LOG_FILE" 2>&1 || exit_code=$?
+        kill "$heartbeat_pid" 2>/dev/null; wait "$heartbeat_pid" 2>/dev/null
+        printf "\n" >&2
+    fi
 
     [[ -n "$sys_prompt_tmpfile" ]] && rm -f "$sys_prompt_tmpfile"
 
