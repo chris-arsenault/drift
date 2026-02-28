@@ -60,10 +60,18 @@ export function PhaseBadge({ phase }: { phase: string }) {
 // ── Type Badge ──────────────────────────────────────────────────────────
 
 const TYPE_CLASS: Record<string, string> = {
+  // Cluster finding types
   structural: "badge-accent",
   behavioral: "badge-high",
   semantic: "badge-low",
   css: "badge-medium",
+  // Library artifact types
+  "eslint-rule": "badge-accent",
+  adr: "badge-medium",
+  pattern: "badge-low",
+  checklist: "badge-neutral",
+  "ast-grep-rule": "badge-accent",
+  "ruff-rule": "badge-accent",
 };
 
 export function TypeBadge({ type }: { type: string }) {

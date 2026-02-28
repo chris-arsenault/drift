@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { useDriftStore } from "../data/store";
 import { MetricCard, TypeBadge, TimeAgo } from "../components/SharedUI";
 import type { LibraryArtifact } from "../types";
@@ -276,9 +276,8 @@ export default function LibraryBrowser() {
                     const isSelected =
                       selectedArtifact?.artifact.id === artifact.id;
                     return (
-                      <>
+                      <Fragment key={artifact.id}>
                         <tr
-                          key={artifact.id}
                           className="detail-row"
                           onClick={() => toggleRow(artifact.id)}
                         >
@@ -288,7 +287,7 @@ export default function LibraryBrowser() {
                           <td><TimeAgo date={artifact.updated ?? null} /></td>
                         </tr>
                         {isExpanded && (
-                          <tr key={`${artifact.id}-detail`}>
+                          <tr>
                             <td colSpan={4} style={{ padding: 0 }}>
                               <div className="detail-expand">
                                 {artifact.description && (
@@ -334,7 +333,7 @@ export default function LibraryBrowser() {
                             </td>
                           </tr>
                         )}
-                      </>
+                      </Fragment>
                     );
                   })}
                 </tbody>
