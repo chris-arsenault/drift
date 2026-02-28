@@ -176,3 +176,57 @@ export interface ProjectSyncStatus {
   artifacts: ArtifactSyncStatus[];
   summary: ProjectSyncSummary;
 }
+
+// ── Cluster Data ──────────────────────────────────────────────────────
+
+export interface ClusterFinding {
+  clusterId: string;
+  verdict: "DUPLICATE" | "OVERLAPPING" | "RELATED" | "FALSE_POSITIVE";
+  confidence?: string;
+  role?: string;
+  sharedBehavior?: string;
+  consolidationReasoning?: string;
+  consolidationComplexity?: string;
+}
+
+export interface SemanticCluster {
+  id: string;
+  members: string[];
+  memberCount: number;
+  avgSimilarity: number;
+  signalBreakdown: Record<string, number>;
+  directorySpread: number;
+  kindMix: Record<string, number>;
+  sharedCallees: string[];
+  consumerOverlap: number;
+  rankScore: number;
+  finding: ClusterFinding | null;
+  verdict: string | null;
+  inManifest: boolean;
+}
+
+export interface CssCluster {
+  id: string;
+  members: string[];
+  memberCount: number;
+  avgSimilarity: number;
+  signalBreakdown: Record<string, number>;
+  directorySpread: number;
+  linkedComponents: string[];
+  sharedCustomProperties: string[];
+  rankScore: number;
+  inManifest: boolean;
+}
+
+export interface ClusterData {
+  semantic: {
+    selected: SemanticCluster[];
+    unselected: SemanticCluster[];
+    total: number;
+  };
+  css: {
+    selected: CssCluster[];
+    unselected: CssCluster[];
+    total: number;
+  };
+}

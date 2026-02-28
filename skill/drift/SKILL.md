@@ -193,6 +193,27 @@ If the manifest already exists, each audit phase compares against existing entri
 - **Previously found areas** are compared — note if drift has worsened, improved, or been resolved
 - **Completed areas** are checked for regression — if drift has returned, flag it prominently
 
+#### ADR Violation Detection
+
+When re-auditing finds drift in an area that was previously `completed`:
+
+1. **Check if the area has an associated ADR:**
+   Look in the attack plan's `guard_artifacts` for ADR paths, or search `docs/adr/`
+   for ADRs whose Context section references the area's ID or name.
+
+2. **If an ADR exists for a regressed area, this is an ADR violation:**
+   - Flag it with `"severity": "violation"` in the finding — this is higher than HIGH
+   - Include the ADR reference: "This area was resolved by ADR-NNNN but drift has
+     returned, suggesting enforcement mechanisms have failed."
+   - Check which enforcement mechanism failed (run the ADR enforcement check from
+     the guard phase's Step 6 for this specific ADR)
+   - ADR violations must appear at the **TOP** of re-audit findings, before any
+     normal priority sorting
+
+3. **If no ADR exists for a regressed area:**
+   - This is a normal regression, not a violation
+   - Recommend adding guard artifacts to prevent future regression
+
 Present the combined findings when the audit phase is complete.
 
 ---
@@ -369,38 +390,160 @@ status to `in_progress` or `completed`.
 
 ## Phase: Guard
 
-Generate enforcement artifacts for all unified areas.
+Generate enforcement artifacts for all unified areas. **Hard enforcement (lint rules) comes
+first and is mandatory. Documentation (ADRs, guides) comes second.**
 
-### Execution Loop
+Read `$DRIFT_SEMANTIC/skill/drift-guard/SKILL.md` and follow its two-phase methodology.
+
+### Step 1: Generate Hard Enforcement for ALL Areas
 
 1. Read `.drift-audit/attack-plan.json`
 2. Find all areas where `phase` is `guard`
-3. For each area:
+3. For EVERY area, generate lint rules BEFORE writing any documentation:
 
-#### Per-Area Workflow
-
-Read `$DRIFT_SEMANTIC/skill/drift-guard/SKILL.md` and follow its complete methodology:
+**Per-area rule generation:**
 
 **a. Read the canonical pattern** (now the only pattern, post-unification).
 
-**b. Generate ESLint rules** — import restrictions, API usage restrictions, structural
-pattern bans. Use `warn` severity initially.
+**b. Read 1-2 old variant files** (from git history or unification log) to understand
+what to ban.
 
-**c. Write an ADR** — document what was decided and why. Number sequentially in `docs/adr/`.
+**c. Generate ESLint rules** — at minimum one of:
+   - `no-restricted-imports` banning non-canonical module paths
+   - `no-restricted-syntax` banning old code patterns via AST selectors
+   - Custom rule module for complex detection logic
+   Use `warn` severity initially.
 
-**d. Write/update pattern guide** — practical usage guide in `docs/patterns/`.
+**d. Generate ast-grep rules** if the project uses ast-grep — for structural patterns
+that ESLint selectors can't express.
 
-**e. Update review checklist** — add drift-specific items.
+**e. Apply TypeScript config changes** if tighter types prevent the drift
+(e.g., `paths` aliases to enforce canonical import paths).
 
-**f. Update plan.**
-Set area's `phase` to `completed`. Record `guard_artifacts` (list of files created).
-Update `drift-manifest.json` status to `completed`.
+### Step 2: Wire All Rules and Verify
 
-4. Present consolidated summary:
-   - ESLint rules created (with violation counts if measurable)
-   - ADRs written
-   - Pattern docs written
-   - Recommended rollout (warn → fix → error → CI)
+After generating rules for ALL areas (not one at a time):
+
+1. Update the ESLint config to import and enable every new rule.
+2. Run ESLint and report violation counts per rule.
+3. If zero violations for a rule, verify it's actually matching (could indicate
+   the rule isn't loaded or the selector is wrong).
+
+Present the enforcement scoreboard:
+```
+Guard Enforcement:
+  Areas guarded:        N/N
+  ESLint rules:         N (M violations found)
+  ast-grep rules:       N
+  Config changes:       N
+```
+
+If any area has NO enforceable rule, explain specifically why to the user.
+
+### Step 3: Generate Documentation for ALL Areas
+
+Only after all rules are wired and verified:
+
+**a. Write an ADR** for each area — the ADR's Enforcement section MUST reference
+the specific rule names created in Step 1.
+
+**b. Write/update pattern guide** — practical usage guide in `docs/patterns/`.
+
+**c. Update review checklist** — drift-specific items covering what lint rules
+cannot catch (semantic correctness, architectural intent, edge cases).
+
+### Step 4: Update Plan and Summarize
+
+For each area:
+- Set `phase` to `completed`
+- Record `guard_artifacts` (list of files created — rules, ADRs, docs)
+- Update `drift-manifest.json` status to `completed`
+
+Present consolidated summary:
+- ESLint rules created per area with violation counts
+- ast-grep rules created
+- Config changes made
+- ADRs written (with enforcement section referencing rules)
+- Pattern docs written
+- Recommended rollout (warn → fix → error → CI)
+
+### Step 5: Verify ESLint Integration
+
+After generating all guard artifacts, verify that ESLint rules are actually wired into the
+project's config. Rules that aren't referenced have zero effect.
+
+1. **List generated rule files:**
+   ```bash
+   ls "$PROJECT_ROOT"/eslint-rules/*.{js,cjs,mjs,ts} 2>/dev/null
+   ```
+
+2. **Detect and read the ESLint config:**
+   ```bash
+   ls "$PROJECT_ROOT"/eslint.config.* 2>/dev/null && echo "Flat config"
+   ls "$PROJECT_ROOT"/.eslintrc* 2>/dev/null && echo "Legacy config"
+   ```
+   Read whichever config file exists.
+
+3. **For each generated rule file, check if it's referenced in the config:**
+   - **Custom rule modules:** Check that the file is imported AND the rule name appears
+     in a `rules: { 'drift-guard/rule-name': '...' }` entry (or equivalent).
+   - **`no-restricted-imports` additions:** Check the config contains the expected
+     restricted paths/patterns from the generated rules.
+   - **`no-restricted-syntax` additions:** Check the config contains the expected
+     AST selectors.
+
+4. **Report results:**
+   ```
+   ESLint Integration Status:
+     eslint-rules/no-direct-fetch.js .... INTEGRATED (warn)
+     eslint-rules/use-modal-shell.js .... NOT INTEGRATED
+     no-restricted-imports additions .... INTEGRATED (2 paths configured)
+   ```
+   For unintegrated rules, provide the exact code to add to the ESLint config
+   (following the patterns in `$DRIFT_SEMANTIC/skill/drift-guard/references/eslint-rule-patterns.md`).
+
+5. **Offer to integrate:**
+   If any rules are not wired, ask the user if they want you to update the ESLint config.
+   If yes, make the changes and verify:
+   ```bash
+   npx eslint src/ --format compact 2>/dev/null | grep -c "Warning\|Error" || echo "0 violations"
+   ```
+
+### Step 6: Verify ADR Enforcement
+
+Cross-reference ADRs with their declared enforcement mechanisms to detect enforcement decay.
+
+1. **Enumerate ADRs:**
+   ```bash
+   find "$PROJECT_ROOT/docs/adr" -name "*.md" 2>/dev/null | sort
+   ```
+
+2. **For each ADR with status "Accepted":**
+   Read the file and parse the `## Enforcement` section. Extract references to:
+   - **ESLint rules:** lines containing rule names (e.g., `drift-guard/rule-name`,
+     `no-restricted-imports`)
+   - **Review checklists:** lines referencing checklist files or PR templates
+   - **Pattern documentation:** lines with file paths like `docs/patterns/...`
+
+3. **Verify each referenced mechanism exists and is active:**
+   - For ESLint rules: check the rule file exists AND is enabled in the ESLint config.
+     If the rule was supposed to be `error` but is `warn` or `off`, flag as degraded.
+   - For review checklists: check the referenced file exists and still contains
+     the drift-related items mentioned in the ADR.
+   - For pattern documentation: check the referenced file exists. Flag if modified
+     more recently than the ADR (pattern may have evolved without ADR update).
+
+4. **Report enforcement status per ADR:**
+   ```
+   ADR Enforcement Status:
+     ADR-0001: Modal Pattern ............. OK (3/3 mechanisms active)
+     ADR-0002: API Client Layer .......... DEGRADED (eslint rule is warn, should be error)
+     ADR-0003: Error Boundary ............ BROKEN (pattern doc missing)
+   ```
+
+5. **For broken or degraded enforcement:**
+   Provide specific remediation steps for each issue and ask the user if they
+   want you to fix them.
 
 ---
 

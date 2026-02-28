@@ -17,7 +17,7 @@ const execFileAsync = promisify(execFile);
 const LIBRARY_DIR = path.join(os.homedir(), ".drift", "library");
 const LIBRARY_PATH = path.join(LIBRARY_DIR, "library.json");
 const SUBSCRIPTIONS_PATH = path.join(LIBRARY_DIR, "subscriptions.json");
-const SCRIPTS_DIR = path.resolve(import.meta.dirname, "..", "..", "scripts");
+const SCRIPTS_DIR = path.resolve(import.meta.dirname, "..", "..", "..", "scripts");
 
 export const projectsRouter = Router();
 
@@ -287,6 +287,108 @@ projectsRouter.get("/:name/sync", async (req, res) => {
   };
 
   res.json({ project: project.name, artifacts, summary });
+});
+
+// ── GET /:name/clusters — Pipeline cluster data with selection status ────
+
+interface ClusterEntry {
+  id: string;
+  members: string[];
+  memberCount: number;
+  avgSimilarity: number;
+  signalBreakdown: Record<string, number>;
+  directorySpread: number;
+  rankScore: number;
+  [key: string]: unknown;
+}
+
+interface Finding {
+  clusterId: string;
+  verdict: string;
+  confidence?: string;
+  role?: string;
+  sharedBehavior?: string;
+  consolidationReasoning?: string;
+  consolidationComplexity?: string;
+  [key: string]: unknown;
+}
+
+interface ManifestArea {
+  id: string;
+  [key: string]: unknown;
+}
+
+projectsRouter.get("/:name/clusters", async (req, res) => {
+  const registry = await readRegistry();
+  const project = findProject(registry, req.params.name);
+
+  if (!project) {
+    res.status(404).json({ error: `Project "${req.params.name}" not found` });
+    return;
+  }
+
+  const auditDir = path.join(project.path, ".drift-audit");
+  const semanticDir = path.join(auditDir, "semantic");
+
+  const [clusters, findings, cssClusters, manifest] = await Promise.all([
+    readJsonSafe<ClusterEntry[]>(path.join(semanticDir, "clusters.json")),
+    readJsonSafe<Finding[]>(path.join(semanticDir, "findings.json")),
+    readJsonSafe<ClusterEntry[]>(path.join(semanticDir, "css-clusters.json")),
+    readJsonSafe<Manifest & { areas?: ManifestArea[] }>(
+      path.join(auditDir, "drift-manifest.json"),
+    ),
+  ]);
+
+  // Build findings lookup
+  const findingsByCluster: Record<string, Finding> = {};
+  for (const f of findings ?? []) {
+    if (f.clusterId) findingsByCluster[f.clusterId] = f;
+  }
+
+  // Build manifest area ID set
+  const manifestIds = new Set(
+    (manifest?.areas ?? []).map((a) => a.id),
+  );
+
+  // Classify semantic clusters
+  const semanticSelected: Array<ClusterEntry & { finding: Finding | null; verdict: string | null; inManifest: true }> = [];
+  const semanticUnselected: Array<ClusterEntry & { finding: Finding | null; verdict: string | null; inManifest: false }> = [];
+
+  for (const c of clusters ?? []) {
+    const finding = findingsByCluster[c.id] ?? null;
+    const inManifest = manifestIds.has(`semantic-${c.id}`);
+    if (inManifest) {
+      semanticSelected.push({ ...c, finding, verdict: finding?.verdict ?? null, inManifest: true });
+    } else {
+      semanticUnselected.push({ ...c, finding, verdict: finding?.verdict ?? null, inManifest: false });
+    }
+  }
+
+  // Classify CSS clusters
+  const cssSelected: Array<ClusterEntry & { inManifest: true }> = [];
+  const cssUnselected: Array<ClusterEntry & { inManifest: false }> = [];
+
+  for (const c of cssClusters ?? []) {
+    const inManifest = manifestIds.has(`css-${c.id}`);
+    if (inManifest) {
+      cssSelected.push({ ...c, inManifest: true });
+    } else {
+      cssUnselected.push({ ...c, inManifest: false });
+    }
+  }
+
+  res.json({
+    semantic: {
+      selected: semanticSelected,
+      unselected: semanticUnselected,
+      total: (clusters ?? []).length,
+    },
+    css: {
+      selected: cssSelected,
+      unselected: cssUnselected,
+      total: (cssClusters ?? []).length,
+    },
+  });
 });
 
 // ── POST /:name/sync/pull — Pull artifacts from library ─────────────────

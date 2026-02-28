@@ -14,6 +14,7 @@ import type {
   ArtifactDetail,
   LibraryGitStatus,
   ProjectSyncStatus,
+  ClusterData,
 } from "../types";
 
 // ── Store shape ─────────────────────────────────────────────────────────
@@ -26,6 +27,7 @@ export interface DriftStore {
   selectedArtifact: ArtifactDetail | null;
   gitStatus: LibraryGitStatus | null;
   syncStatus: ProjectSyncStatus | null;
+  clusterData: ClusterData | null;
 
   // Status
   loading: boolean;
@@ -34,6 +36,8 @@ export interface DriftStore {
   gitError: string | null;
   syncLoading: boolean;
   syncError: string | null;
+  clusterLoading: boolean;
+  clusterError: string | null;
 
   // Actions
   fetchProjects: () => Promise<void>;
@@ -50,6 +54,7 @@ export interface DriftStore {
   syncPull: (name: string) => Promise<string>;
   syncPush: (name: string) => Promise<string>;
   toggleExclude: (name: string, artifactId: string, excluded: boolean) => Promise<void>;
+  fetchClusters: (name: string) => Promise<void>;
 }
 
 // ── Store ────────────────────────────────────────────────────────────────
@@ -62,6 +67,7 @@ export const useDriftStore = create<DriftStore>((set) => ({
   selectedArtifact: null,
   gitStatus: null,
   syncStatus: null,
+  clusterData: null,
 
   // Status
   loading: false,
@@ -70,6 +76,8 @@ export const useDriftStore = create<DriftStore>((set) => ({
   gitError: null,
   syncLoading: false,
   syncError: null,
+  clusterLoading: false,
+  clusterError: null,
 
   // Actions
   fetchProjects: async () => {
@@ -253,6 +261,19 @@ export const useDriftStore = create<DriftStore>((set) => ({
       set({
         syncError: (err as Error).message || "Failed to toggle exclude",
         syncLoading: false,
+      });
+    }
+  },
+
+  fetchClusters: async (name: string) => {
+    set({ clusterLoading: true, clusterError: null });
+    try {
+      const data = await apiGet<ClusterData>(`/projects/${name}/clusters`);
+      set({ clusterData: data, clusterLoading: false });
+    } catch (err) {
+      set({
+        clusterError: (err as Error).message || "Failed to fetch clusters",
+        clusterLoading: false,
       });
     }
   },

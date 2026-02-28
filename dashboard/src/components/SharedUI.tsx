@@ -74,6 +74,24 @@ export function TypeBadge({ type }: { type: string }) {
   );
 }
 
+// ── Verdict Badge ──────────────────────────────────────────────────────
+
+const VERDICT_CLASS: Record<string, string> = {
+  DUPLICATE: "badge-high",
+  OVERLAPPING: "badge-medium",
+  RELATED: "badge-low",
+  FALSE_POSITIVE: "badge-neutral",
+};
+
+export function VerdictBadge({ verdict }: { verdict: string | null }) {
+  if (!verdict) return <span className="badge badge-neutral">Unverified</span>;
+  return (
+    <span className={`badge ${VERDICT_CLASS[verdict] ?? "badge-neutral"}`}>
+      {verdict}
+    </span>
+  );
+}
+
 // ── Sync Badge ─────────────────────────────────────────────────────────
 
 const SYNC_CLASS: Record<SyncState, string> = {

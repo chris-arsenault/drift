@@ -4,7 +4,7 @@ drift has two entry points: `drift` (wrapper CLI for management) and `cli.sh` (p
 
 ## Management Commands
 
-### `drift version`
+### `drift version` (`--version`, `-v`, `-V`)
 
 Show version info: git SHA, date, pyproject version, and install path.
 
@@ -32,23 +32,26 @@ Run the full pipeline: extract through report. Equivalent to running each stage 
 
 ```bash
 drift run --project /path/to/your/project
+drift run --project . --output-dir .drift-audit/semantic --manifest .drift-audit/drift-manifest.json
 ```
+
+Flags: `--project <path>` (default `.`), `--output-dir <path>`, `--manifest <path>`.
 
 ### Individual Stages
 
 Each stage reads from and writes to `$DRIFT_OUTPUT_DIR` (default: `.drift-audit/semantic/`).
 
 ```bash
-drift extract --project <path>    # Stage 1: TypeScript AST extraction
-drift fingerprint                 # Stage 2a: structural fingerprints
-drift typesig                     # Stage 2c: type signature hashes
-drift callgraph                   # Stage 2d: call graph vectors
-drift depcontext                  # Stage 2e: dependency context
-drift score                       # Stage 3: pairwise similarity
-drift cluster                     # Stage 4: community detection
-drift css-extract --project <path> # Stage 1b: CSS rule extraction
-drift css-score                   # Stage 3b: CSS pairwise similarity + clustering
-drift report                      # Stage 6: generate report + manifest
+drift extract --project <path>           # Stage 1: TypeScript AST extraction
+drift fingerprint                        # Stage 2a: structural fingerprints
+drift typesig                            # Stage 2c: type signature hashes
+drift callgraph                          # Stage 2d: call graph vectors
+drift depcontext                         # Stage 2e: dependency context
+drift score [--threshold 0.35]           # Stage 3: pairwise similarity
+drift cluster [--threshold 0.35]         # Stage 4: community detection
+drift css-extract --project <path>       # Stage 1b: CSS rule extraction
+drift css-score [--threshold 0.40]       # Stage 3b: CSS pairwise similarity + clustering
+drift report [--manifest <path>]         # Stage 6: generate report + manifest
 ```
 
 ### Embedding
@@ -67,7 +70,7 @@ The `run` command includes embed automatically — it skips gracefully if no pur
 
 ```bash
 # Structural pattern matching (requires ast-grep/sg)
-drift ast-grep --project <path>
+drift ast-grep --project <path>    # also: drift patterns
 ```
 
 ### Ingestion
@@ -84,11 +87,11 @@ drift ingest-purposes --file purpose-statements.json
 Query the extracted data interactively.
 
 ```bash
-drift inspect unit "src/components/ToolBar.tsx::ToolBar"
-drift inspect similar "src/components/ToolBar.tsx::ToolBar" --top 10
-drift inspect cluster cluster-001
-drift inspect consumers "src/hooks/useDataLoader.ts::useDataLoader"
-drift inspect callers "src/lib/api.ts::fetchEntities"
+drift inspect unit <id>              # Show full unit metadata
+drift inspect similar <id> --top 10  # Show most similar units
+drift inspect cluster <cluster-id>   # Show cluster details
+drift inspect consumers <id>         # Show who imports this unit
+drift inspect callers <id>           # Show who calls this unit
 ```
 
 ## Search Commands
@@ -96,10 +99,10 @@ drift inspect callers "src/lib/api.ts::fetchEntities"
 Search across the index.
 
 ```bash
-drift search calls "src/lib/api.ts::fetchEntities"
-drift search called-by "src/hooks/useDataLoader.ts::useDataLoader"
-drift search co-occurs-with "src/components/Modal.tsx::Modal"
-drift search type-like "src/hooks/useDataLoader.ts::useDataLoader"
+drift search calls <id>            # Find all units that the given unit calls
+drift search called-by <id>        # Find all units that call the given unit
+drift search co-occurs-with <id>   # Find units frequently imported alongside
+drift search type-like <id>        # Find units with matching type signatures
 ```
 
 ## Sync Mode Commands
@@ -126,19 +129,19 @@ Initialize the library directory. Default: `~/.drift/library`.
 
 Creates the directory structure, an empty `library.json` manifest, and initializes a git repository.
 
-### `drift library push`
+### `drift library push` (alias: `publish`)
 
 Push guard artifacts from the current project to the library.
 
 Reads `.drift-audit/config.json` to find artifact directories (via `sync` mappings), computes checksums, and copies new/changed files to the library.
 
-### `drift library pull`
+### `drift library pull` (alias: `sync`)
 
 Pull artifacts from the library into the current project.
 
 Syncs all artifacts that have a matching sync mapping in the project config. Only copies files where the library version differs from the local version.
 
-### `drift library list`
+### `drift library list` (alias: `ls`)
 
 Show all artifacts in the library, grouped by type.
 

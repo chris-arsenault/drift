@@ -408,7 +408,7 @@ Inspection:
   inspect similar <id>      Find similar units
   inspect cluster <id>      Show cluster details
   inspect consumers <id>    Show who imports this unit
-  inspect callers <id>      Show what this unit calls
+  inspect callers <id>      Show who calls this unit
 
 Search:
   search calls <id>             Find all units that the given unit calls

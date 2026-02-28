@@ -9,7 +9,9 @@ import {
   ImpactBadge,
   PhaseBadge,
   SyncBadge,
+  VerdictBadge,
 } from "../components/SharedUI";
+import type { SemanticCluster, CssCluster } from "../types";
 
 // ── Sync Status Panel ────────────────────────────────────────────────────
 
@@ -132,6 +134,191 @@ function SyncStatusPanel({ projectName }: { projectName: string }) {
   );
 }
 
+// ── Unselected Clusters Panel ─────────────────────────────────────────────
+
+function ClusterRow({
+  cluster,
+  type,
+  isExpanded,
+  onToggle,
+}: {
+  cluster: SemanticCluster | CssCluster;
+  type: "semantic" | "css";
+  isExpanded: boolean;
+  onToggle: () => void;
+}) {
+  const topSignals = Object.entries(cluster.signalBreakdown ?? {})
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, 3);
+
+  return (
+    <>
+      <tr className="detail-row" onClick={onToggle}>
+        <td className="td-mono" style={{ fontSize: 12 }}>{cluster.id}</td>
+        <td><TypeBadge type={type} /></td>
+        <td>
+          {type === "semantic"
+            ? <VerdictBadge verdict={(cluster as SemanticCluster).verdict} />
+            : <span className="badge badge-neutral">--</span>}
+        </td>
+        <td className="td-mono">{cluster.memberCount}</td>
+        <td className="td-mono">{(cluster.avgSimilarity * 100).toFixed(0)}%</td>
+      </tr>
+      {isExpanded && (
+        <tr>
+          <td colSpan={5} style={{ padding: 0 }}>
+            <div className="detail-expand">
+              <div className="detail-label">Members</div>
+              <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, lineHeight: 1.8 }}>
+                {cluster.members.map((m) => (
+                  <div key={m}>{m}</div>
+                ))}
+              </div>
+              {topSignals.length > 0 && (
+                <>
+                  <div className="detail-label">Top Signals</div>
+                  <div style={{ display: "flex", gap: "var(--sp-3)", flexWrap: "wrap" }}>
+                    {topSignals.map(([name, val]) => (
+                      <span key={name} style={{ fontSize: 12 }}>
+                        <span style={{ fontWeight: 500 }}>{name}:</span>{" "}
+                        <span className="td-mono">{(val * 100).toFixed(0)}%</span>
+                      </span>
+                    ))}
+                  </div>
+                </>
+              )}
+              {type === "semantic" && (cluster as SemanticCluster).finding && (
+                <>
+                  {(cluster as SemanticCluster).finding!.role && (
+                    <>
+                      <div className="detail-label">Role</div>
+                      <div>{(cluster as SemanticCluster).finding!.role}</div>
+                    </>
+                  )}
+                  {(cluster as SemanticCluster).finding!.consolidationReasoning && (
+                    <>
+                      <div className="detail-label">Consolidation Reasoning</div>
+                      <div>{(cluster as SemanticCluster).finding!.consolidationReasoning}</div>
+                    </>
+                  )}
+                </>
+              )}
+              {type === "css" && (cluster as CssCluster).linkedComponents?.length > 0 && (
+                <>
+                  <div className="detail-label">Linked Components</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--sp-2)" }}>
+                    {(cluster as CssCluster).linkedComponents.map((comp) => (
+                      <span key={comp} className="badge badge-accent">{comp.split("::").pop()}</span>
+                    ))}
+                  </div>
+                </>
+              )}
+              {type === "css" && (cluster as CssCluster).sharedCustomProperties?.length > 0 && (
+                <>
+                  <div className="detail-label">Shared Custom Properties</div>
+                  <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-secondary)" }}>
+                    {(cluster as CssCluster).sharedCustomProperties.join(", ")}
+                  </div>
+                </>
+              )}
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+function UnselectedClustersPanel({ projectName }: { projectName: string }) {
+  const clusterData = useDriftStore((s) => s.clusterData);
+  const clusterLoading = useDriftStore((s) => s.clusterLoading);
+  const clusterError = useDriftStore((s) => s.clusterError);
+  const fetchClusters = useDriftStore((s) => s.fetchClusters);
+  const [expandedClusters, setExpandedClusters] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    fetchClusters(projectName);
+  }, [projectName, fetchClusters]);
+
+  const toggleCluster = (id: string) => {
+    setExpandedClusters((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const semanticUnselected = clusterData?.semantic.unselected ?? [];
+  const cssUnselected = clusterData?.css.unselected ?? [];
+  const allUnselected: Array<{ cluster: SemanticCluster | CssCluster; type: "semantic" | "css" }> = [
+    ...semanticUnselected.map((c) => ({ cluster: c, type: "semantic" as const })),
+    ...cssUnselected.map((c) => ({ cluster: c, type: "css" as const })),
+  ];
+
+  // Summary counts
+  const unverified = semanticUnselected.filter((c) => !c.verdict).length;
+  const related = semanticUnselected.filter((c) => c.verdict === "RELATED").length;
+  const falsePositive = semanticUnselected.filter((c) => c.verdict === "FALSE_POSITIVE").length;
+
+  return (
+    <div className="panel">
+      <div className="panel-header">
+        <h3>Unselected Clusters</h3>
+        {allUnselected.length > 0 && (
+          <span className="panel-count">{allUnselected.length} clusters</span>
+        )}
+      </div>
+
+      {allUnselected.length > 0 && (
+        <div style={{ padding: "var(--sp-3) var(--sp-4)", borderBottom: "1px solid var(--border-subtle)", display: "flex", gap: "var(--sp-3)", flexWrap: "wrap", fontSize: 13 }}>
+          {unverified > 0 && <span className="badge badge-neutral">{unverified} unverified</span>}
+          {related > 0 && <span className="badge badge-low">{related} related</span>}
+          {falsePositive > 0 && <span className="badge badge-neutral">{falsePositive} false positive</span>}
+          {cssUnselected.length > 0 && <span className="badge badge-medium">{cssUnselected.length} css</span>}
+        </div>
+      )}
+
+      <div className="panel-body dense">
+        {clusterLoading ? (
+          <div className="empty-state">Loading clusters&hellip;</div>
+        ) : clusterError ? (
+          <div className="empty-state" style={{ color: "var(--critical)" }}>{clusterError}</div>
+        ) : allUnselected.length > 0 ? (
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Cluster</th>
+                <th>Type</th>
+                <th>Verdict</th>
+                <th>Members</th>
+                <th>Similarity</th>
+              </tr>
+            </thead>
+            <tbody>
+              {allUnselected.map(({ cluster, type }) => (
+                <ClusterRow
+                  key={cluster.id}
+                  cluster={cluster}
+                  type={type}
+                  isExpanded={expandedClusters.has(cluster.id)}
+                  onToggle={() => toggleCluster(cluster.id)}
+                />
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <div className="empty-state">
+            {!clusterData
+              ? "No pipeline data. Run the semantic pipeline first."
+              : "All clusters are in the manifest."}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Project Detail ───────────────────────────────────────────────────────
 
 export default function ProjectDetail() {
@@ -210,6 +397,9 @@ export default function ProjectDetail() {
           <MetricCard label="High" value={summary.high_impact ?? 0} />
           <MetricCard label="Medium" value={summary.medium_impact ?? 0} />
           <MetricCard label="Low" value={summary.low_impact ?? 0} />
+          {summary.by_type && Object.entries(summary.by_type).map(([type, count]) => (
+            <MetricCard key={type} label={type} value={count} />
+          ))}
         </div>
       ) : (
         <div className="panel">
@@ -281,6 +471,36 @@ export default function ProjectDetail() {
                                   </div>
                                 </>
                               )}
+                              {area.type === "css" && area.linked_components && area.linked_components.length > 0 && (
+                                <>
+                                  <div className="detail-label">Linked Components</div>
+                                  <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--sp-2)" }}>
+                                    {area.linked_components.map((comp) => (
+                                      <span key={comp} className="badge badge-accent">{comp.split("::").pop()}</span>
+                                    ))}
+                                  </div>
+                                </>
+                              )}
+                              {area.type === "css" && area.shared_custom_properties && area.shared_custom_properties.length > 0 && (
+                                <>
+                                  <div className="detail-label">Shared Custom Properties</div>
+                                  <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-secondary)" }}>
+                                    {area.shared_custom_properties.join(", ")}
+                                  </div>
+                                </>
+                              )}
+                              {area.type === "semantic" && area.semantic_role && (
+                                <>
+                                  <div className="detail-label">Semantic Role</div>
+                                  <div>{area.semantic_role}</div>
+                                </>
+                              )}
+                              {area.type === "semantic" && area.consolidation_assessment && (
+                                <>
+                                  <div className="detail-label">Consolidation Assessment</div>
+                                  <div>{area.consolidation_assessment}</div>
+                                </>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -295,6 +515,8 @@ export default function ProjectDetail() {
           )}
         </div>
       </div>
+
+      <UnselectedClustersPanel projectName={project.name} />
 
       <div className="panel">
         <div className="panel-header">

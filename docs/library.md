@@ -70,7 +70,7 @@ This creates:
 
 ## Commands
 
-### `drift library push`
+### `drift library push` (alias: `publish`)
 
 Scans the project's artifact directories (from `sync` mappings in config) and copies new or changed files to the library.
 
@@ -89,7 +89,7 @@ Push only picks up files that contain a `drift-generated` marker within the firs
 
 This prevents pre-existing project files (e.g. hand-written review guides) from leaking into the library.
 
-### `drift library pull`
+### `drift library pull` (alias: `sync`)
 
 Pulls artifacts from the library into the project.
 
@@ -98,7 +98,7 @@ Pulls artifacts from the library into the project.
 - Creates destination directories if needed
 - Reports what was synced
 
-### `drift library list`
+### `drift library list` (alias: `ls`)
 
 Prints all artifacts in the library, grouped by type. Shows source project and last update date.
 

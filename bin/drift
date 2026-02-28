@@ -339,9 +339,9 @@ Usage: drift library <command>
 
 Commands:
   init [path]        Initialize the drift artifact library (default: ~/.drift/library)
-  push               Push guard artifacts from current project to library
-  pull               Pull artifacts from library into current project
-  list               Show all artifacts in the library
+  push (publish)     Push guard artifacts from current project to library
+  pull (sync)        Pull artifacts from library into current project
+  list (ls)          Show all artifacts in the library
   status             Compare library artifacts vs current project
   commit             Stage all changes and commit to local git
   remote [url]       Show or set the remote origin URL
