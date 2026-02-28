@@ -12,6 +12,7 @@
 #   --model <model>        Override Claude model for analytical steps
 #   --skip-to <N>          Skip to step N (verifies prior gates)
 #   --max-turns <N>        Max agentic turns per Claude call (default: 200)
+#   --verbose              Stream all output to terminal (always logged to .drift-audit/audit.log)
 #   --dry-run              Print what would run without executing
 
 set -euo pipefail
@@ -47,6 +48,7 @@ Options:
   --model <model>        Override Claude model for analytical steps
   --skip-to <N>          Skip to step N (verifies prior gates pass)
   --max-turns <N>        Max agentic turns per Claude call (default: 200)
+  --verbose              Stream all output to terminal (always logged)
   --dry-run              Print what would run without executing
   -h, --help             Show this help
 USAGE
@@ -55,6 +57,15 @@ USAGE
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+_log() {
+    # Pipe all command output to log file; with --verbose also to terminal.
+    if [[ "${VERBOSE:-0}" -eq 1 ]]; then
+        tee -a "$LOG_FILE"
+    else
+        cat >> "$LOG_FILE"
+    fi
+}
 
 _strip_frontmatter() {
     # Strip YAML frontmatter (--- ... ---) from a markdown file.
@@ -194,24 +205,18 @@ _claude_call() {
         return 0
     fi
 
-    local safe_name="${step_name// /-}"
-    local log_file="$AUDIT_DIR/claude-${safe_name}.log"
-    mkdir -p "$AUDIT_DIR"
     local exit_code=0
 
-    # Always stream to terminal + log file
-    echo "$user_prompt" | "${cmd[@]}" 2>&1 | tee "$log_file" || exit_code=$?
+    echo "$user_prompt" | "${cmd[@]}" 2>&1 | _log || exit_code=$?
 
     [[ -n "$sys_prompt_tmpfile" ]] && rm -f "$sys_prompt_tmpfile"
 
     if [[ "$exit_code" -ne 0 ]]; then
         error "Claude call failed: $step_name (exit code: $exit_code)"
-        error "Log: $log_file"
         return 1
     fi
 
     success "Claude completed: $step_name"
-    info "Log: $log_file"
     return 0
 }
 
@@ -237,7 +242,7 @@ step_0_library_pull() {
             return 0
         fi
         info "Online mode — pulling from library..."
-        (cd "$PROJECT_ROOT" && "$DRIFT_HOME/bin/drift" library pull) || warn "Library pull failed (continuing)"
+        (cd "$PROJECT_ROOT" && "$DRIFT_HOME/bin/drift" library pull) 2>&1 | _log || warn "Library pull failed (continuing)"
     else
         info "Offline mode — skipping library pull."
     fi
@@ -252,7 +257,7 @@ step_1_pipeline() {
     fi
 
     # Run from project root so relative OUTPUT_DIR resolves correctly
-    (cd "$PROJECT_ROOT" && bash "$DRIFT_HOME/cli.sh" run --project "$PROJECT_ROOT")
+    (cd "$PROJECT_ROOT" && bash "$DRIFT_HOME/cli.sh" run --project "$PROJECT_ROOT") 2>&1 | _log
 
     gate_file_exists "$CODE_UNITS" "code-units.json" || {
         error "Pipeline failed: no code-units.json produced."
@@ -270,7 +275,7 @@ step_1_pipeline() {
             bash "$DRIFT_HOME/cli.sh" cluster && \
             bash "$DRIFT_HOME/cli.sh" css-extract --project "$PROJECT_ROOT" && \
             bash "$DRIFT_HOME/cli.sh" css-score && \
-            bash "$DRIFT_HOME/cli.sh" report)
+            bash "$DRIFT_HOME/cli.sh" report) 2>&1 | _log
         gate_file_exists "$CLUSTERS" "clusters.json" || {
             error "Pipeline failed even with individual stages."
             exit 1
@@ -284,7 +289,7 @@ step_2_structural_behavioral() {
     # Check for re-audit
     if [[ -f "$MANIFEST" ]]; then
         info "Existing manifest found — running regression check..."
-        "$DRIFT_HOME/bin/drift" plan-update "$PROJECT_ROOT" --check-regressions || true
+        ("$DRIFT_HOME/bin/drift" plan-update "$PROJECT_ROOT" --check-regressions) 2>&1 | _log || true
     fi
 
     # Build combined system prompt from two skill files
@@ -410,17 +415,16 @@ step_4_rerun_pipeline() {
         return 0
     fi
 
-    (cd "$PROJECT_ROOT" && \
-        info "Ingesting purpose statements..." && \
-        bash "$DRIFT_HOME/cli.sh" ingest-purposes --file "$PURPOSES" && \
-        info "Embedding..." && \
-        bash "$DRIFT_HOME/cli.sh" embed && \
-        info "Re-scoring..." && \
-        bash "$DRIFT_HOME/cli.sh" score && \
-        info "Re-clustering..." && \
-        bash "$DRIFT_HOME/cli.sh" cluster && \
-        info "Re-generating report..." && \
-        bash "$DRIFT_HOME/cli.sh" report)
+    info "Ingesting purpose statements..."
+    (cd "$PROJECT_ROOT" && bash "$DRIFT_HOME/cli.sh" ingest-purposes --file "$PURPOSES") 2>&1 | _log
+    info "Embedding..."
+    (cd "$PROJECT_ROOT" && bash "$DRIFT_HOME/cli.sh" embed) 2>&1 | _log
+    info "Re-scoring..."
+    (cd "$PROJECT_ROOT" && bash "$DRIFT_HOME/cli.sh" score) 2>&1 | _log
+    info "Re-clustering..."
+    (cd "$PROJECT_ROOT" && bash "$DRIFT_HOME/cli.sh" cluster) 2>&1 | _log
+    info "Re-generating report..."
+    (cd "$PROJECT_ROOT" && bash "$DRIFT_HOME/cli.sh" report) 2>&1 | _log
 
     gate_file_exists "$CLUSTERS" "updated clusters.json" || {
         error "Step 4 failed: re-run did not produce updated clusters"
@@ -482,7 +486,7 @@ step_6_validate() {
     fi
 
     info "Running quality gate..."
-    "$DRIFT_HOME/bin/drift" validate "$PROJECT_ROOT" --fix-summary || {
+    ("$DRIFT_HOME/bin/drift" validate "$PROJECT_ROOT" --fix-summary) 2>&1 | _log || {
         warn "Quality gate found failures — some areas may need richer evidence."
     }
 
@@ -494,6 +498,7 @@ step_6_validate() {
     info "  Clusters:  $CLUSTERS"
     info "  Findings:  $FINDINGS"
     info "  Purposes:  $PURPOSES"
+    info "  Log:       $LOG_FILE"
     echo "" >&2
     info "Next steps:"
     info "  drift plan $PROJECT_ROOT      — build prioritized attack plan"
@@ -508,6 +513,7 @@ PROJECT_ROOT=""
 MODEL=""
 SKIP_TO=0
 MAX_TURNS="200"
+VERBOSE=0
 DRY_RUN=0
 
 while [[ $# -gt 0 ]]; do
@@ -515,6 +521,7 @@ while [[ $# -gt 0 ]]; do
         --model)      MODEL="$2"; shift 2 ;;
         --skip-to)    SKIP_TO="$2"; shift 2 ;;
         --max-turns)  MAX_TURNS="$2"; shift 2 ;;
+        --verbose)    VERBOSE=1; shift ;;
         --dry-run)    DRY_RUN=1; shift ;;
         -h|--help)    usage; exit 0 ;;
         *)
@@ -547,6 +554,11 @@ PURPOSES="$SEMANTIC_DIR/purpose-statements.json"
 CLUSTERS="$SEMANTIC_DIR/clusters.json"
 CODE_UNITS="$SEMANTIC_DIR/code-units.json"
 
+# Log file — all deterministic and claude output goes here
+LOG_FILE="$AUDIT_DIR/audit.log"
+mkdir -p "$AUDIT_DIR"
+: > "$LOG_FILE"   # truncate on fresh run
+
 # Session IDs (set by step functions)
 SESSION_STRUCTURAL=""
 SESSION_SEMANTIC=""
@@ -573,8 +585,10 @@ fi
 info "Drift audit orchestrator"
 info "Project: $PROJECT_ROOT"
 info "Drift:   $DRIFT_HOME"
+info "Log:     $LOG_FILE"
 [[ -n "$MODEL" ]] && info "Model:   $MODEL"
 [[ "$SKIP_TO" -gt 0 ]] && info "Skip to: step $SKIP_TO"
+[[ "$VERBOSE" -eq 1 ]] && info "Verbose: on"
 echo "" >&2
 
 # Verify skip-to gates
