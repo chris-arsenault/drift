@@ -51,10 +51,15 @@ This runs 7 steps automatically:
 | 0 | Library pull (if online) | deterministic |
 | 1 | Extract + feature extraction (no scoring) | deterministic |
 | 2 | Purpose statements | `claude -p` |
-| 3 | Structural + behavioral audit | `claude -p` |
+| 3 | Structural + behavioral audit | `claude -p` × 8 + merge |
 | 4 | Score + cluster (with purpose embeddings) | deterministic |
 | 5 | Cluster verification + semantic manifest entries | `claude -p` |
 | 6 | Validate manifest | deterministic |
+
+Step 3 splits the audit into 8 focused `claude -p` calls (1 structural + 7 behavioral
+domains), each writing to a partial file. A deterministic merge combines them into the
+manifest. This prevents context overflow on large codebases — each call only explores
+one domain.
 
 Purpose statements are written BEFORE scoring so clusters are semantically informed.
 The structural audit runs before scoring since it only needs code units, not clusters.

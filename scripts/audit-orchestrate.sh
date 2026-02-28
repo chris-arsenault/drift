@@ -398,19 +398,20 @@ step_3_structural_behavioral() {
         ("$DRIFT_HOME/bin/drift" plan-update "$PROJECT_ROOT" --check-regressions) 2>&1 | _log || true
     fi
 
-    # Build combined system prompt from two skill files
-    local combined_skill
-    combined_skill="$(mktemp)"
-    _strip_frontmatter "$DRIFT_HOME/skill/drift-audit/SKILL.md" > "$combined_skill"
-    printf '\n\n---\n\n' >> "$combined_skill"
-    _strip_frontmatter "$DRIFT_HOME/skill/drift-audit-ux/SKILL.md" >> "$combined_skill"
-
-    SESSION_STRUCTURAL="$(_gen_uuid)"
-
     local unit_count
     unit_count="$(python3 -c "import json; d=json.load(open('$CODE_UNITS')); print(len(d.get('units',d)) if isinstance(d,dict) else len(d))" 2>/dev/null || echo "?")"
 
-    local prompt="You are running a structural and behavioral drift audit on: $PROJECT_ROOT
+    local partials_dir="$AUDIT_DIR/partials"
+    mkdir -p "$partials_dir"
+
+    # ---- Step 3a: Discovery + structural audit (one call) ----
+    info "Step 3a: Structural audit..."
+
+    local structural_skill
+    structural_skill="$(mktemp)"
+    _strip_frontmatter "$DRIFT_HOME/skill/drift-audit/SKILL.md" > "$structural_skill"
+
+    local structural_prompt="You are running a STRUCTURAL drift audit on: $PROJECT_ROOT
 
 Available artifacts:
 - Code units ($unit_count units): $CODE_UNITS
@@ -418,30 +419,96 @@ Available artifacts:
 
 YOUR TASK:
 1. Run: bash \"\$DRIFT_SEMANTIC/scripts/discover.sh\" \"$PROJECT_ROOT\"
-2. Read the discovery output and explore the codebase — identify structural drift areas
-3. Work through all 7 behavioral domain checklists (modals, shared components, workflows, loading/error states, forms, keyboard/a11y, notifications)
+2. Read the discovery output and explore the codebase
+3. Identify structural drift areas: inconsistent project structure, naming conventions,
+   file organization, import patterns, TypeScript vs JavaScript migration state, etc.
 4. For EVERY finding: read representative files, extract code excerpts, write 3+ sentence analysis
-5. Write ALL findings to $MANIFEST — structural entries with \"type\": \"structural\", behavioral with \"type\": \"behavioral\"
-6. Write human-readable report to $AUDIT_DIR/drift-report.md
-
-Use the pipeline's code-units.json to cross-reference extracted units.
+5. Write findings to $partials_dir/structural.json as a JSON array of manifest area objects
+   (each with \"type\": \"structural\")
 
 IMPORTANT:
-- Do NOT perform semantic audit — that is a separate step
-- Do NOT re-run the semantic pipeline
-- Do NOT write findings.json
+- ONLY structural drift — do NOT audit behavioral domains (modals, forms, etc.)
+- Do NOT write to $MANIFEST directly — write to $partials_dir/structural.json
 - Environment: DRIFT_SEMANTIC=$DRIFT_HOME
 
-DELIVERABLES (must exist when done):
-- $MANIFEST with structural + behavioral entries
-- $AUDIT_DIR/drift-report.md"
+DELIVERABLE:
+- $partials_dir/structural.json (JSON array of manifest area entries)"
 
-    _claude_call "structural+behavioral audit" "$combined_skill" "$prompt" "--session-id $SESSION_STRUCTURAL"
+    _claude_call "structural audit" "$structural_skill" "$structural_prompt" "--session-id $(_gen_uuid)"
+    rm -f "$structural_skill"
 
-    rm -f "$combined_skill"
+    gate_file_exists "$partials_dir/structural.json" "structural.json" || {
+        warn "Structural audit produced no output — continuing with behavioral domains"
+    }
+
+    # ---- Step 3b: Behavioral domain audits (one call per domain) ----
+    # Each domain gets its own session and writes to its own partial file.
+
+    local ux_skill
+    ux_skill="$(mktemp)"
+    _strip_frontmatter "$DRIFT_HOME/skill/drift-audit-ux/SKILL.md" > "$ux_skill"
+
+    local -a domains=(
+        "modals|Modal/Dialog Interaction Consistency|modal,dialog,overlay,ModalShell,onClose,Escape"
+        "shared-components|Shared Component Adoption|shared-components,shared component library,ad-hoc alternative"
+        "workflows|Multi-Step Workflow Consistency|workflow,multi-step,wizard,queue,review step,confirmation"
+        "loading-errors|Loading & Error State Patterns|loading,isLoading,error,isEmpty,skeleton,spinner,error boundary"
+        "forms|Form Validation & Input Behavior|form,validation,onBlur,onSubmit,dirty,unsaved changes"
+        "keyboard-a11y|Keyboard & Accessibility Patterns|keydown,focus,aria-,tabIndex,autoFocus,screen reader"
+        "notifications|Notification & Feedback Patterns|toast,notification,snackbar,feedback,success message,error message"
+    )
+
+    local domain_spec domain_id domain_name domain_hints
+    for domain_spec in "${domains[@]}"; do
+        IFS='|' read -r domain_id domain_name domain_hints <<< "$domain_spec"
+
+        info "Step 3b: $domain_name..."
+
+        local domain_prompt="You are auditing a SINGLE behavioral domain on: $PROJECT_ROOT
+
+DOMAIN: $domain_name
+Search hints: $domain_hints
+
+Available artifacts:
+- Code units ($unit_count units): $CODE_UNITS
+
+YOUR TASK:
+1. Search the codebase for patterns related to this domain (use the search hints above)
+2. Read representative files to understand how this domain is implemented across apps
+3. Build a comparison matrix showing variant implementations
+4. For EVERY finding: include code excerpts (5-15 lines) and 3+ sentence analysis
+5. Write findings to $partials_dir/$domain_id.json as a JSON array of manifest area objects
+   (each with \"type\": \"behavioral\", \"domain\": \"$domain_name\")
+
+If this domain does not apply to the project (no relevant patterns found), write an empty
+array [] to the output file and move on.
+
+IMPORTANT:
+- ONLY audit this ONE domain — do not explore other domains
+- Do NOT write to $MANIFEST directly — write to $partials_dir/$domain_id.json
+- Environment: DRIFT_SEMANTIC=$DRIFT_HOME
+
+DELIVERABLE:
+- $partials_dir/$domain_id.json (JSON array of manifest area entries, or [] if not applicable)"
+
+        _claude_call "$domain_name" "$ux_skill" "$domain_prompt" "--session-id $(_gen_uuid)"
+
+        gate_file_exists "$partials_dir/$domain_id.json" "$domain_id.json" || {
+            warn "$domain_name produced no output — writing empty array"
+            echo '[]' > "$partials_dir/$domain_id.json"
+        }
+    done
+
+    rm -f "$ux_skill"
+
+    # ---- Step 3c: Deterministic merge ----
+    info "Step 3c: Merging partial results..."
+
+    python3 -u "$DRIFT_HOME/scripts/merge-audit-partials.py" \
+        "$partials_dir" "$MANIFEST" "$AUDIT_DIR/drift-report.md" 2>&1 | _log
 
     gate_file_exists "$MANIFEST" "drift-manifest.json" || {
-        error "Step 3 failed: no drift-manifest.json produced"
+        error "Step 3 failed: merge produced no drift-manifest.json"
         error "Re-run: drift audit $PROJECT_ROOT --skip-to 3"
         exit 1
     }
@@ -449,6 +516,10 @@ DELIVERABLES (must exist when done):
         error "Step 3 failed: manifest has no areas"
         exit 1
     }
+
+    local area_count
+    area_count="$(python3 -c "import json; print(len(json.load(open('$MANIFEST')).get('areas',[])))" 2>/dev/null || echo "?")"
+    success "Merged $area_count areas from $(ls "$partials_dir"/*.json 2>/dev/null | wc -l) partial files."
 }
 
 step_4_score_cluster() {
