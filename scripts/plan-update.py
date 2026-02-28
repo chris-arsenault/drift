@@ -146,6 +146,30 @@ def check_regressions(project_root: Path, as_json: bool) -> None:
         sys.exit(1)
 
 
+# ── Approve ──────────────────────────────────────────────────────
+
+def approve_all(project_root: Path) -> None:
+    """Bulk-transition all pending areas to planned."""
+    plan = load_plan(project_root)
+    if not plan:
+        error("No attack-plan.json found.")
+        sys.exit(1)
+
+    count = 0
+    for entry in plan.get("plan", []):
+        if entry.get("phase") == "pending":
+            entry["phase"] = "planned"
+            count += 1
+
+    if count == 0:
+        info("No pending areas to approve.")
+        return
+
+    plan["updated"] = now_iso()
+    save_plan(project_root, plan)
+    success(f"Approved {count} area(s): pending \u2192 planned.")
+
+
 # ── Main ──────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -153,6 +177,7 @@ def main() -> None:
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--finalize", metavar="AREA_ID", help="Mark area as completed")
     group.add_argument("--check-regressions", action="store_true", help="Check for regressions")
+    group.add_argument("--approve", action="store_true", help="Bulk-transition pending \u2192 planned")
 
     parser.add_argument("project_root", help="Path to project root")
     parser.add_argument("--guard-artifacts", nargs="*", default=[], help="Guard artifact paths (with --finalize)")
@@ -163,6 +188,8 @@ def main() -> None:
 
     if args.finalize:
         finalize_area(project_root, args.finalize, args.guard_artifacts)
+    elif args.approve:
+        approve_all(project_root)
     else:
         check_regressions(project_root, args.json)
 

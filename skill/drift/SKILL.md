@@ -148,51 +148,41 @@ Phase values: `pending` (in manifest but not yet planned), `planned` (approved f
 
 ## Phase: Unify
 
-Execute unification for all eligible areas in the attack plan.
+Run the deterministic unify orchestrator. This script loops through eligible areas,
+builds per-area work files, and calls `claude -p` once per area with an execution-framed
+prompt that prevents the LLM from re-evaluating whether unification is warranted.
 
-### Execution Loop
+### Run the Unify
 
-1. Read `.drift-audit/attack-plan.json`
-2. Find all areas where `phase` is `planned` AND all `depends_on` areas are `completed`
-3. For each eligible area, in rank order:
+```bash
+drift unify "$PROJECT_ROOT"
+```
 
-#### Per-Area Workflow
+This processes all eligible areas (phase=`planned`, dependencies met) in rank order:
 
-Read `$DRIFT_SEMANTIC/skill/drift-unify/SKILL.md` and follow its complete methodology for this area:
+| Step | What | Type |
+|------|------|------|
+| 1 | Read attack plan, filter eligible areas | deterministic |
+| 2 | For each area: build work file from manifest | deterministic |
+| 3 | For each area: `claude -p` with focused prompt | `claude -p` × N |
+| 4 | For each area: gate on actual file changes | deterministic |
+| 5 | For each area: update plan (→guard) + manifest | deterministic |
+| 6 | Summary | deterministic |
 
-**a. Determine canonical pattern.**
-If `canonical_variant` is set in the plan, use it. Otherwise, read the manifest's
-`recommendation` field and present the variant options to the user. The user picks the
-canonical. Update the plan entry.
+Each `claude -p` call gets a pre-built work file containing the area's variants,
+files, code excerpts, recommendation, and canonical pattern. The prompt frames the
+task as execution, not evaluation — Claude cannot skip areas or batch-close them.
 
-**b. Understand the canonical.**
-Read the canonical implementation files thoroughly. Read 1-2 variant files to understand
-what you're migrating from.
+Options:
+- `--area <id>` — only unify this specific area
+- `--model <model>` — override the Claude model
+- `--max-turns <N>` — max agentic turns per Claude call (default: 200)
+- `--verbose` — stream verbose output
+- `--dry-run` — print what would run without executing
 
-**c. Prepare shared infrastructure.**
-If consolidation requires new shared components/hooks/utilities, create them first.
+Unify a single area: `drift unify "$PROJECT_ROOT" --area <area-id>`
 
-**d. Refactor files.**
-For each non-canonical file in the area's manifest entry:
-- Read the full file
-- Plan the changes to align with the canonical pattern
-- Apply changes, preserving all business logic and behavior
-- Verify imports and types
-
-**e. Document.**
-- Append to `UNIFICATION_LOG.md` (what changed, what was created, exceptions, breaking changes)
-- Update `DRIFT_BACKLOG.md` (what's left if the area isn't fully done)
-
-**f. Update plan.**
-Set the area's `phase` to `guard`. Record `unify_summary`. Update `drift-manifest.json`
-status to `in_progress` or `completed`.
-
-4. After all eligible areas are processed, present a consolidated summary:
-   - Areas unified in this session
-   - Files changed per area
-   - Shared utilities created
-   - Areas now eligible for guard
-   - Areas still blocked
+Wait for the unify to complete before proceeding to the Guard phase.
 
 ---
 
