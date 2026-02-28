@@ -9,8 +9,8 @@
 #   Step 0: Library pull                              (deterministic)
 #   Step 1: Extract + feature extraction              (deterministic)
 #   Step 2: Purpose statements                        (claude -p)
-#   Step 3: Score + cluster (with purpose embeddings) (deterministic)
-#   Step 4: Structural + behavioral audit             (claude -p)
+#   Step 3: Structural + behavioral audit             (claude -p)
+#   Step 4: Score + cluster (with purpose embeddings) (deterministic)
 #   Step 5: Cluster verification + semantic entries   (claude -p)
 #   Step 6: Validate manifest                         (deterministic)
 #
@@ -82,8 +82,8 @@ Steps:
   0  Library pull (if online)
   1  Extract + feature extraction (no scoring yet)
   2  Purpose statements (claude -p)
-  3  Score + cluster with purpose embeddings
-  4  Structural + behavioral audit (claude -p)
+  3  Structural + behavioral audit (claude -p)
+  4  Score + cluster with purpose embeddings
   5  Cluster verification + semantic manifest entries (claude -p)
   6  Validate manifest
 
@@ -389,8 +389,70 @@ DELIVERABLE:
     success "$purpose_count purpose statements written."
 }
 
-step_3_score_cluster() {
-    step_header 3 "Score + Cluster (with purpose embeddings)"
+step_3_structural_behavioral() {
+    step_header 3 "Structural + Behavioral Audit (Claude)"
+
+    # Check for re-audit
+    if [[ -f "$MANIFEST" ]]; then
+        info "Existing manifest found — running regression check..."
+        ("$DRIFT_HOME/bin/drift" plan-update "$PROJECT_ROOT" --check-regressions) 2>&1 | _log || true
+    fi
+
+    # Build combined system prompt from two skill files
+    local combined_skill
+    combined_skill="$(mktemp)"
+    _strip_frontmatter "$DRIFT_HOME/skill/drift-audit/SKILL.md" > "$combined_skill"
+    printf '\n\n---\n\n' >> "$combined_skill"
+    _strip_frontmatter "$DRIFT_HOME/skill/drift-audit-ux/SKILL.md" >> "$combined_skill"
+
+    SESSION_STRUCTURAL="$(_gen_uuid)"
+
+    local unit_count
+    unit_count="$(python3 -c "import json; d=json.load(open('$CODE_UNITS')); print(len(d.get('units',d)) if isinstance(d,dict) else len(d))" 2>/dev/null || echo "?")"
+
+    local prompt="You are running a structural and behavioral drift audit on: $PROJECT_ROOT
+
+Available artifacts:
+- Code units ($unit_count units): $CODE_UNITS
+- Purpose statements: $PURPOSES
+
+YOUR TASK:
+1. Run: bash \"\$DRIFT_SEMANTIC/scripts/discover.sh\" \"$PROJECT_ROOT\"
+2. Read the discovery output and explore the codebase — identify structural drift areas
+3. Work through all 7 behavioral domain checklists (modals, shared components, workflows, loading/error states, forms, keyboard/a11y, notifications)
+4. For EVERY finding: read representative files, extract code excerpts, write 3+ sentence analysis
+5. Write ALL findings to $MANIFEST — structural entries with \"type\": \"structural\", behavioral with \"type\": \"behavioral\"
+6. Write human-readable report to $AUDIT_DIR/drift-report.md
+
+Use the pipeline's code-units.json to cross-reference extracted units.
+
+IMPORTANT:
+- Do NOT perform semantic audit — that is a separate step
+- Do NOT re-run the semantic pipeline
+- Do NOT write findings.json
+- Environment: DRIFT_SEMANTIC=$DRIFT_HOME
+
+DELIVERABLES (must exist when done):
+- $MANIFEST with structural + behavioral entries
+- $AUDIT_DIR/drift-report.md"
+
+    _claude_call "structural+behavioral audit" "$combined_skill" "$prompt" "--session-id $SESSION_STRUCTURAL"
+
+    rm -f "$combined_skill"
+
+    gate_file_exists "$MANIFEST" "drift-manifest.json" || {
+        error "Step 3 failed: no drift-manifest.json produced"
+        error "Re-run: drift audit $PROJECT_ROOT --skip-to 3"
+        exit 1
+    }
+    gate_json_nonempty_array "$MANIFEST" "areas" "manifest areas" || {
+        error "Step 3 failed: manifest has no areas"
+        exit 1
+    }
+}
+
+step_4_score_cluster() {
+    step_header 4 "Score + Cluster (with purpose embeddings)"
 
     if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
         info "[DRY RUN] ingest-purposes → embed → score → cluster → css-extract → css-score → report"
@@ -411,82 +473,17 @@ step_3_score_cluster() {
     (cd "$PROJECT_ROOT" && bash "$DRIFT_HOME/cli.sh" css-score) 2>&1 | _log
     info "Generating report..."
     (cd "$PROJECT_ROOT" && bash "$DRIFT_HOME/cli.sh" report --manifest "$MANIFEST_PATH") 2>&1 | _log || {
-        # report may fail if manifest doesn't exist yet — that's OK, step 4 creates it
         (cd "$PROJECT_ROOT" && bash "$DRIFT_HOME/cli.sh" report) 2>&1 | _log || warn "Report generation failed (continuing)"
     }
 
     gate_file_exists "$CLUSTERS" "clusters.json" || {
-        error "Step 3 failed: no clusters.json produced"
+        error "Step 4 failed: no clusters.json produced"
         exit 1
     }
 
     local cluster_count
     cluster_count="$(python3 -c "import json; print(len(json.load(open('$CLUSTERS'))))" 2>/dev/null || echo "?")"
     success "$cluster_count clusters found (purpose-informed scoring)."
-}
-
-step_4_structural_behavioral() {
-    step_header 4 "Structural + Behavioral Audit (Claude)"
-
-    # Check for re-audit
-    if [[ -f "$MANIFEST" ]]; then
-        info "Existing manifest found — running regression check..."
-        ("$DRIFT_HOME/bin/drift" plan-update "$PROJECT_ROOT" --check-regressions) 2>&1 | _log || true
-    fi
-
-    # Build combined system prompt from two skill files
-    local combined_skill
-    combined_skill="$(mktemp)"
-    _strip_frontmatter "$DRIFT_HOME/skill/drift-audit/SKILL.md" > "$combined_skill"
-    printf '\n\n---\n\n' >> "$combined_skill"
-    _strip_frontmatter "$DRIFT_HOME/skill/drift-audit-ux/SKILL.md" >> "$combined_skill"
-
-    SESSION_STRUCTURAL="$(_gen_uuid)"
-
-    local unit_count cluster_count
-    unit_count="$(python3 -c "import json; d=json.load(open('$CODE_UNITS')); print(len(d.get('units',d)) if isinstance(d,dict) else len(d))" 2>/dev/null || echo "?")"
-    cluster_count="$(python3 -c "import json; print(len(json.load(open('$CLUSTERS'))))" 2>/dev/null || echo "?")"
-
-    local prompt="You are running a structural and behavioral drift audit on: $PROJECT_ROOT
-
-The semantic pipeline has already run and produced:
-- Code units ($unit_count units): $CODE_UNITS
-- Clusters ($cluster_count clusters, purpose-informed): $CLUSTERS
-- Report: $SEMANTIC_DIR/semantic-drift-report.md
-
-YOUR TASK:
-1. Run: bash \"\$DRIFT_SEMANTIC/scripts/discover.sh\" \"$PROJECT_ROOT\"
-2. Read the discovery output and explore the codebase — identify structural drift areas
-3. Work through all 7 behavioral domain checklists (modals, shared components, workflows, loading/error states, forms, keyboard/a11y, notifications)
-4. For EVERY finding: read representative files, extract code excerpts, write 3+ sentence analysis
-5. Write ALL findings to $MANIFEST — structural entries with \"type\": \"structural\", behavioral with \"type\": \"behavioral\"
-6. Write human-readable report to $AUDIT_DIR/drift-report.md
-
-Use the pipeline's code-units.json and clusters to cross-reference extracted units.
-
-IMPORTANT:
-- Do NOT perform semantic audit — that is a separate step
-- Do NOT re-run the semantic pipeline
-- Do NOT write purpose statements or findings.json
-- Environment: DRIFT_SEMANTIC=$DRIFT_HOME
-
-DELIVERABLES (must exist when done):
-- $MANIFEST with structural + behavioral entries
-- $AUDIT_DIR/drift-report.md"
-
-    _claude_call "structural+behavioral audit" "$combined_skill" "$prompt" "--session-id $SESSION_STRUCTURAL"
-
-    rm -f "$combined_skill"
-
-    gate_file_exists "$MANIFEST" "drift-manifest.json" || {
-        error "Step 4 failed: no drift-manifest.json produced"
-        error "Re-run: drift audit $PROJECT_ROOT --skip-to 4"
-        exit 1
-    }
-    gate_json_nonempty_array "$MANIFEST" "areas" "manifest areas" || {
-        error "Step 4 failed: manifest has no areas"
-        exit 1
-    }
 }
 
 step_5_cluster_verification() {
@@ -674,12 +671,12 @@ if [[ "$SKIP_TO" -ge 3 ]]; then
 fi
 if [[ "$SKIP_TO" -ge 4 ]]; then
     info "Verifying gates for step 3..."
-    gate_file_exists "$CLUSTERS" "clusters.json" || exit 1
+    gate_file_exists "$MANIFEST" "drift-manifest.json" || exit 1
+    gate_json_nonempty_array "$MANIFEST" "areas" "manifest areas" || exit 1
 fi
 if [[ "$SKIP_TO" -ge 5 ]]; then
     info "Verifying gates for step 4..."
-    gate_file_exists "$MANIFEST" "drift-manifest.json" || exit 1
-    gate_json_nonempty_array "$MANIFEST" "areas" "manifest areas" || exit 1
+    gate_file_exists "$CLUSTERS" "clusters.json" || exit 1
 fi
 if [[ "$SKIP_TO" -ge 6 ]]; then
     info "Verifying gates for step 5..."
@@ -690,7 +687,7 @@ fi
 [[ "$SKIP_TO" -le 0 ]] && step_0_library_pull
 [[ "$SKIP_TO" -le 1 ]] && step_1_extract
 [[ "$SKIP_TO" -le 2 ]] && step_2_purpose_statements
-[[ "$SKIP_TO" -le 3 ]] && step_3_score_cluster
-[[ "$SKIP_TO" -le 4 ]] && step_4_structural_behavioral
+[[ "$SKIP_TO" -le 3 ]] && step_3_structural_behavioral
+[[ "$SKIP_TO" -le 4 ]] && step_4_score_cluster
 [[ "$SKIP_TO" -le 5 ]] && step_5_cluster_verification
 [[ "$SKIP_TO" -le 6 ]] && step_6_validate

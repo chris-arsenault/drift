@@ -51,13 +51,14 @@ This runs 7 steps automatically:
 | 0 | Library pull (if online) | deterministic |
 | 1 | Extract + feature extraction (no scoring) | deterministic |
 | 2 | Purpose statements | `claude -p` |
-| 3 | Score + cluster (with purpose embeddings) | deterministic |
-| 4 | Structural + behavioral audit | `claude -p` |
+| 3 | Structural + behavioral audit | `claude -p` |
+| 4 | Score + cluster (with purpose embeddings) | deterministic |
 | 5 | Cluster verification + semantic manifest entries | `claude -p` |
 | 6 | Validate manifest | deterministic |
 
-Purpose statements are written BEFORE scoring so clusters are semantically informed
-from the start. No redundant two-pass pipeline needed.
+Purpose statements are written BEFORE scoring so clusters are semantically informed.
+The structural audit runs before scoring since it only needs code units, not clusters.
+Scoring and clustering happen once with all signals available.
 
 Each step has artifact gates that prevent the next step from starting until required
 files exist. If a step fails, re-run from that step:
@@ -78,7 +79,7 @@ Wait for the audit to complete before proceeding to the Plan phase.
 ### Re-Audit Behavior
 
 The orchestrator handles re-audits automatically. If the manifest already exists,
-Step 4 runs regression checking before the structural audit begins.
+Step 3 runs regression checking before the structural audit begins.
 
 #### ADR Violation Detection
 
