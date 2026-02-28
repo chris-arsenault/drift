@@ -166,11 +166,12 @@ _claude_call() {
         cmd+=("$flag" "$value")
     fi
 
-    # System prompt — strip frontmatter and inject
+    # System prompt — strip frontmatter, write to temp file, pass via --append-system-prompt-file
+    local sys_prompt_tmpfile=""
     if [[ -n "$system_prompt_file" ]]; then
-        local sys_prompt
-        sys_prompt="$(_strip_frontmatter "$system_prompt_file")"
-        cmd+=(--append-system-prompt "$sys_prompt")
+        sys_prompt_tmpfile="$(mktemp)"
+        _strip_frontmatter "$system_prompt_file" > "$sys_prompt_tmpfile"
+        cmd+=(--append-system-prompt-file "$sys_prompt_tmpfile")
     fi
 
     # Model override
@@ -187,7 +188,7 @@ _claude_call() {
 
     if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
         info "[DRY RUN] claude -p $session_flag"
-        info "[DRY RUN]   --append-system-prompt <${system_prompt_file:-none}>"
+        info "[DRY RUN]   --append-system-prompt-file <${system_prompt_file:-none}>"
         info "[DRY RUN]   --permission-mode acceptEdits"
         info "[DRY RUN]   --max-turns ${MAX_TURNS:-200}"
         info "[DRY RUN]   --allowedTools Read,Glob,Grep,Bash,Write,Edit,Agent"
@@ -202,10 +203,12 @@ _claude_call() {
     local exit_code=0
 
     if [[ "${VERBOSE:-0}" -eq 1 ]]; then
-        "${cmd[@]}" "$user_prompt" 2>&1 | tee "$log_file" || exit_code=$?
+        echo "$user_prompt" | "${cmd[@]}" 2>&1 | tee "$log_file" || exit_code=$?
     else
-        "${cmd[@]}" "$user_prompt" > "$log_file" 2>&1 || exit_code=$?
+        echo "$user_prompt" | "${cmd[@]}" > "$log_file" 2>&1 || exit_code=$?
     fi
+
+    [[ -n "$sys_prompt_tmpfile" ]] && rm -f "$sys_prompt_tmpfile"
 
     if [[ "$exit_code" -ne 0 ]]; then
         error "Claude call failed: $step_name (exit code: $exit_code)"
