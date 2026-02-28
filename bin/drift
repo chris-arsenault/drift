@@ -7,8 +7,8 @@
 #   drift self-update      Alias for upgrade
 #   drift install-skill    Install Claude Code skills to a project
 #   drift library          Manage the centralized drift artifact library
-#   drift online           Enable auto-sync (library syncs transparently)
-#   drift offline          Disable auto-sync (manual library sync)
+#   drift online           Enable auto-push/pull (library ops run transparently)
+#   drift offline          Disable auto-push/pull (manual library push/pull)
 #
 # All other commands pass through to cli.sh unchanged.
 
@@ -221,18 +221,18 @@ BLOCK
     if [[ "$mode" == "online" ]]; then
         cat >> "$file" << 'BLOCK'
 
-Centralized artifact library (online mode — auto-sync enabled):
+Centralized artifact library (online mode — auto-push/pull enabled):
 ```bash
 drift library init       # initialize ~/.drift/library
 drift library list       # show library contents
 drift library status     # compare library vs project
 ```
 
-**Auto-sync behavior:** Library sync is automatic. Before starting any drift
-audit phase, run `drift library sync` to pull the latest artifacts from the
-centralized library. After completing any drift-guard phase, run
-`drift library publish` to share new artifacts back to the library.
-Do not ask for confirmation — sync silently as part of the pipeline.
+**Auto-push/pull behavior:** Library operations are automatic. Before starting
+any drift audit phase, run `drift library pull` to pull the latest artifacts
+from the centralized library. After completing any drift-guard phase, run
+`drift library push` to share new artifacts back to the library.
+Do not ask for confirmation — run silently as part of the pipeline.
 <!-- /drift-semantic -->
 BLOCK
     else
@@ -241,8 +241,8 @@ BLOCK
 Centralized artifact library:
 ```bash
 drift library init       # initialize ~/.drift/library
-drift library publish    # push guard artifacts to library
-drift library sync       # pull matching artifacts into project
+drift library push    # push guard artifacts to library
+drift library pull       # pull matching artifacts into project
 drift library list       # show library contents
 drift library status     # compare library vs project
 ```
@@ -260,7 +260,7 @@ drift_online() {
 
     _set_config_mode "$config_file" "online"
     _refresh_claude_block "$project_root" "online"
-    success "Online mode enabled — library sync is now automatic."
+    success "Online mode enabled — library push/pull is now automatic."
 }
 
 drift_offline() {
@@ -272,7 +272,7 @@ drift_offline() {
 
     _set_config_mode "$config_file" "offline"
     _refresh_claude_block "$project_root" "offline"
-    success "Offline mode enabled — run 'drift library sync' and 'drift library publish' manually."
+    success "Offline mode enabled — run 'drift library pull' and 'drift library push' manually."
 }
 
 drift_library() {
@@ -283,11 +283,11 @@ drift_library() {
         init)
             drift_library_init "$@"
             ;;
-        publish)
-            drift_library_publish "$@"
+        push|publish)
+            drift_library_push "$@"
             ;;
-        sync)
-            drift_library_sync "$@"
+        pull|sync)
+            drift_library_pull "$@"
             ;;
         list|ls)
             drift_library_list "$@"
@@ -301,8 +301,8 @@ Usage: drift library <command>
 
 Commands:
   init [path]    Initialize the drift artifact library (default: ~/.drift/library)
-  publish        Publish guard artifacts from current project to library
-  sync           Pull matching artifacts from library into current project
+  push           Push guard artifacts from current project to library
+  pull           Pull artifacts from library into current project
   list           Show all artifacts in the library
   status         Compare library artifacts vs current project
 USAGE
@@ -333,21 +333,21 @@ drift_library_init() {
 INITEOF
 
     success "Initialized drift library at $lib_path"
-    info "Add artifacts with: drift library publish"
+    info "Add artifacts with: drift library push (from a project)"
 }
 
-drift_library_publish() {
+drift_library_push() {
     _require_python3
     local config_file
     config_file="$(_find_project_config)"
-    exec "$_DRIFT_PY" "$DRIFT_HOME/scripts/library-publish.py" "$config_file"
+    exec "$_DRIFT_PY" "$DRIFT_HOME/scripts/library-push.py" "$config_file"
 }
 
-drift_library_sync() {
+drift_library_pull() {
     _require_python3
     local config_file
     config_file="$(_find_project_config)"
-    exec "$_DRIFT_PY" "$DRIFT_HOME/scripts/library-sync.py" "$config_file"
+    exec "$_DRIFT_PY" "$DRIFT_HOME/scripts/library-pull.py" "$config_file"
 }
 
 drift_library_list() {

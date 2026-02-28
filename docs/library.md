@@ -18,13 +18,13 @@ graph LR
         B1["eslint-rules/<br/>no-direct-fetch.js"]
         B2["docs/adr/<br/>0001-fetch-pattern.md"]
     end
-    A1 -->|publish| L1 -->|sync| B1
-    A2 -->|publish| L2 -->|sync| B2
+    A1 -->|push| L1 -->|pull| B1
+    A2 -->|push| L2 -->|pull| B2
 ```
 
 1. **drift-guard** generates artifacts in a project
-2. `drift library publish` copies them to the library
-3. `drift library sync` in another project pulls artifacts into it
+2. `drift library push` copies them to the library
+3. `drift library pull` in another project pulls artifacts into it
 
 The library is **local-first**: it lives at `~/.drift/library/` and works immediately without any git setup. Optionally, you can make the library directory a git repo for team sharing.
 
@@ -70,7 +70,7 @@ This creates:
 
 ## Commands
 
-### `drift library publish`
+### `drift library push`
 
 Scans the project's artifact directories (from `sync` mappings in config) and copies new or changed files to the library.
 
@@ -78,7 +78,7 @@ Scans the project's artifact directories (from `sync` mappings in config) and co
 - Skips unchanged files
 - Derives artifact type from which sync mapping matched
 
-### `drift library sync`
+### `drift library pull`
 
 Pulls artifacts from the library into the project.
 
@@ -98,13 +98,13 @@ Compares library artifacts vs the current project:
 | Symbol | Meaning |
 |--------|---------|
 | `=` | In sync (checksums match) |
-| `<` | Library is newer — run `drift library sync` |
-| `>` | Project is newer — run `drift library publish` |
+| `<` | Library is newer — run `drift library pull` |
+| `>` | Project is newer — run `drift library push` |
 | `?` | Not synced (artifact exists in library but not in project) |
 
 ## Online / Offline Mode
 
-By default, library sync is manual (offline mode). Enable **online mode** to have Claude automatically sync before audits and publish after guard phases:
+By default, library operations are manual (offline mode). Enable **online mode** to have Claude automatically pull before audits and push after guard phases:
 
 ```bash
 drift online     # enable auto-sync
@@ -112,8 +112,8 @@ drift offline    # back to manual
 ```
 
 In online mode, the CLAUDE.md instructions tell Claude to:
-- Run `drift library sync` before starting any audit phase
-- Run `drift library publish` after completing any guard phase
+- Run `drift library pull` before starting any audit phase
+- Run `drift library push` after completing any guard phase
 
 This happens silently as part of the pipeline — no confirmation prompts.
 
@@ -135,7 +135,7 @@ Team members clone the same repo to `~/.drift/library/`:
 git clone <url> ~/.drift/library
 ```
 
-Then `drift library sync` and `drift library publish` work normally. Use `git pull`/`git push` in the library directory to share updates.
+Then `drift library pull` and `drift library push` work normally. Use `git pull`/`git push` in the library directory to share updates.
 
 ## Artifact Types
 

@@ -152,10 +152,10 @@ that records which patterns are canonical so future audits can check for regress
 
 ## After Generating Artifacts
 
-If the project has a drift library configured (`.drift-audit/config.json` with tags),
-run `drift library publish` to share the generated ESLint rules, ADRs, and pattern docs
-with other projects that share the same tags. In online mode, the orchestrator handles
-this automatically after the guard phase completes.
+If the project has a drift library configured (`.drift-audit/config.json`),
+run `drift library push` to share the generated ESLint rules, ADRs, and pattern docs
+with other projects. In online mode, the orchestrator handles this automatically
+after the guard phase completes.
 
 ## Rollout Guidance
 

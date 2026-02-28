@@ -9,7 +9,7 @@ Copies artifacts that have a matching sync mapping.
 Only copies when the checksum differs (library is newer).
 
 Usage:
-    python3 library-sync.py <config-file>
+    python3 library-pull.py <config-file>
 """
 
 from __future__ import annotations
@@ -100,7 +100,7 @@ def sync(config_path: Path) -> None:
     print(file=sys.stderr)
     print(f"[+] Synced {synced} artifact(s), {skipped} already up-to-date.", file=sys.stderr)
     if no_mapping:
-        print(f"[!] {no_mapping} artifact(s) in library have no sync mapping in this project.", file=sys.stderr)
+        print(f"[!] {no_mapping} artifact(s) in library have no mapping in this project.", file=sys.stderr)
 
 
 def main() -> None:

@@ -106,13 +106,13 @@ drift search type-like "src/hooks/useDataLoader.ts::useDataLoader"
 
 ### `drift online`
 
-Enable auto-sync mode for the current project. In online mode, the CLAUDE.md instructions tell Claude to automatically run `drift library sync` before audits and `drift library publish` after guard phases.
+Enable auto-pull/push mode for the current project. In online mode, the CLAUDE.md instructions tell Claude to automatically run `drift library pull` before audits and `drift library push` after guard phases.
 
 Updates `.drift-audit/config.json` (`mode: "online"`) and refreshes the CLAUDE.md block.
 
 ### `drift offline`
 
-Disable auto-sync (default). Library sync and publish must be run manually.
+Disable auto-pull/push (default). Library push and pull must be run manually.
 
 Updates `.drift-audit/config.json` (`mode: "offline"`) and refreshes the CLAUDE.md block.
 
@@ -126,13 +126,13 @@ Initialize the library directory. Default: `~/.drift/library`.
 
 Creates the directory structure and an empty `library.json` manifest.
 
-### `drift library publish`
+### `drift library push`
 
-Publish guard artifacts from the current project to the library.
+Push guard artifacts from the current project to the library.
 
 Reads `.drift-audit/config.json` to find artifact directories (via `sync` mappings), computes checksums, and copies new/changed files to the library.
 
-### `drift library sync`
+### `drift library pull`
 
 Pull artifacts from the library into the current project.
 

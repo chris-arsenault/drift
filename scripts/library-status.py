@@ -143,12 +143,12 @@ def status(config_path: Path, lib_path_override: Path | None = None) -> None:
             print(f"    = {item}")
 
     if library_newer:
-        print(f"\n  Library newer ({len(library_newer)}) — run 'drift library sync' to update:")
+        print(f"\n  Library newer ({len(library_newer)}) — run 'drift library pull' to update:")
         for item in sorted(library_newer):
             print(f"    < {item}")
 
     if project_newer:
-        print(f"\n  Project newer ({len(project_newer)}) — run 'drift library publish' to update:")
+        print(f"\n  Project newer ({len(project_newer)}) — run 'drift library push' to update:")
         for item in sorted(project_newer):
             print(f"    > {item}")
 

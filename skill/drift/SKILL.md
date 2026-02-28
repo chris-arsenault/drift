@@ -37,12 +37,12 @@ Each phase runs ONLY that phase and stops. `/drift` (no args) runs all phases se
 
 Run the semantic pipeline first, then all three audit methodologies, compiling a unified manifest.
 
-### Step 0: Library Sync
+### Step 0: Library Pull
 
-If `.drift-audit/config.json` exists and `mode` is `"online"`, sync the library:
+If `.drift-audit/config.json` exists and `mode` is `"online"`, pull from the library:
 
 ```bash
-drift library sync
+drift library pull
 ```
 
 Skip if the config file does not exist or mode is `"offline"`.
@@ -408,12 +408,12 @@ Update `drift-manifest.json` status to `completed`.
 
 When invoked with no phase argument, run all phases in sequence:
 
-1. **Audit** — library sync (if online), run semantic pipeline, discover all drift
+1. **Audit** — library pull (if online), run semantic pipeline, discover all drift
 2. **Plan** — prioritize and present to user for approval/reordering
 3. **Unify** — resolve all planned areas autonomously
 4. **Guard** — generate enforcement for all unified areas
-5. **Library Publish** — if `.drift-audit/config.json` has `"mode": "online"`, run
-   `drift library publish` to share guard artifacts to the centralized library
+5. **Library Push** — if `.drift-audit/config.json` has `"mode": "online"`, run
+   `drift library push` to share guard artifacts to the centralized library
 6. **Summary** — present full pipeline results
 
 The plan phase is the one human checkpoint in the full pipeline. After the user

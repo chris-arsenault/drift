@@ -85,8 +85,8 @@ Guard artifacts (ESLint rules, ADRs, pattern docs) can be centralized and synced
 
 ```bash
 drift library init       # initialize ~/.drift/library
-drift library publish    # push guard artifacts from project to library
-drift library sync       # pull matching artifacts into project
+drift library push    # push guard artifacts from project to library
+drift library pull       # pull matching artifacts into project
 drift library list       # show library contents
 drift library status     # compare library vs project
 ```
@@ -107,8 +107,8 @@ The library is local-first (`~/.drift/library/`). Optionally back it with git fo
 Enable **online mode** so Claude handles sync transparently as part of the pipeline:
 
 ```bash
-drift online         # auto-sync before audits, auto-publish after guard
-drift offline        # back to manual sync (default)
+drift online         # auto-push/pull before audits, auto-publish after guard
+drift offline        # back to manual push/pull (default)
 ```
 
 See [docs/library.md](docs/library.md) for details.
@@ -149,11 +149,11 @@ drift upgrade        # pull latest + refresh dependencies
 drift install-skill  # install/update skills in a project
 
 # Library
-drift library init | publish | sync | list | status
+drift library init | push | pull | list | status
 
 # Mode
-drift online         # enable auto-sync
-drift offline        # disable auto-sync (default)
+drift online         # enable auto-push/pull
+drift offline        # disable auto-push/pull (default)
 
 # Low-level pipeline (typically invoked by skills, not directly)
 drift run --project .              # full semantic analysis

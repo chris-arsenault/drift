@@ -9,7 +9,7 @@ Scans each sync directory, computes checksums, and copies new/updated
 artifacts into the library.  Updates library.json accordingly.
 
 Usage:
-    python3 library-publish.py <config-file>
+    python3 library-push.py <config-file>
 """
 
 from __future__ import annotations
