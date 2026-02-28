@@ -234,6 +234,7 @@ _claude_call() {
     cmd+=(--permission-mode acceptEdits)
     cmd+=(--max-turns "${MAX_TURNS:-200}")
     cmd+=(--allowedTools "Read,Glob,Grep,Bash,Write,Edit,Agent")
+    cmd+=(--output-format stream-json)
     cmd+=(--add-dir "$PROJECT_ROOT")
 
     info "Claude call: $step_name"
@@ -243,6 +244,7 @@ _claude_call() {
         info "[DRY RUN]   --append-system-prompt-file <${system_prompt_file:-none}>"
         info "[DRY RUN]   --permission-mode acceptEdits"
         info "[DRY RUN]   --max-turns ${MAX_TURNS:-200}"
+        info "[DRY RUN]   --output-format stream-json"
         info "[DRY RUN]   --allowedTools Read,Glob,Grep,Bash,Write,Edit,Agent"
         info "[DRY RUN]   prompt: $(echo "$user_prompt" | head -3)..."
         return 0
@@ -250,16 +252,14 @@ _claude_call() {
 
     local exit_code=0
 
+    # stream-json outputs events in real-time.
+    # Verbose: raw JSON to terminal + log.
+    # Non-verbose: filter to progress lines on terminal, raw JSON to log only.
     if [[ "${VERBOSE:-0}" -eq 1 ]]; then
-        # Verbose: stream everything to terminal + log
         echo "$user_prompt" | "${cmd[@]}" --verbose 2>&1 | tee -a "$LOG_FILE" || exit_code=$?
     else
-        # Non-verbose: output to log only, heartbeat on terminal
-        (while true; do sleep 15; printf "." >&2; done) &
-        local heartbeat_pid=$!
-        echo "$user_prompt" | "${cmd[@]}" >> "$LOG_FILE" 2>&1 || exit_code=$?
-        kill "$heartbeat_pid" 2>/dev/null; wait "$heartbeat_pid" 2>/dev/null
-        printf "\n" >&2
+        echo "$user_prompt" | "${cmd[@]}" 2>&1 \
+            | python3 -u "$DRIFT_HOME/scripts/stream-progress.py" "$LOG_FILE" || exit_code=$?
     fi
 
     [[ -n "$sys_prompt_tmpfile" ]] && rm -f "$sys_prompt_tmpfile"
