@@ -374,6 +374,80 @@ def _compute_file_aggregates(rules: list[dict]) -> dict:  # noqa: C901
 
 
 # ---------------------------------------------------------------------------
+# Intra-file prefix grouping
+# ---------------------------------------------------------------------------
+
+
+def _group_rules_by_prefix(
+    rules: list[dict],
+    compact_rules: list[dict],
+    min_rules: int = 3,
+) -> dict[str, list[dict]]:
+    """Group parsed rules by BEM block prefix.
+
+    Returns a dict mapping prefix → list of compact rules.
+    Only includes groups with >= min_rules rules.
+    """
+    groups: dict[str, list[dict]] = {}
+    for rule, compact in zip(rules, compact_rules):
+        class_names = rule.get("classNames", [])
+        if not class_names:
+            continue
+        # Use the first class name's prefix as the group key
+        prefix = _extract_prefix(class_names[0])
+        if prefix:
+            groups.setdefault(prefix, []).append(compact)
+
+    return {k: v for k, v in groups.items() if len(v) >= min_rules}
+
+
+def _build_prefix_sub_units(
+    prefix_groups: dict[str, list[dict]],
+    rules: list[dict],
+    file_path: str,
+) -> list[dict]:
+    """Build sub-unit dicts for each prefix group within a file.
+
+    Each sub-unit has the same structure as a file-level unit so the
+    scoring functions in css_score.py work unchanged.
+    """
+    # Build a mapping from compact rule selector+lineRange to full rule
+    # for computing aggregates from the original parsed rules
+    full_rules_by_key: dict[tuple, dict] = {}
+    for rule in rules:
+        key = (rule["selector"], tuple(rule["lineRange"]))
+        full_rules_by_key[key] = rule
+
+    sub_units: list[dict] = []
+    for prefix, compact_group in prefix_groups.items():
+        # Find the corresponding full rules for aggregate computation
+        full_group: list[dict] = []
+        for cr in compact_group:
+            key = (cr["selector"], tuple(cr["lineRange"]))
+            if key in full_rules_by_key:
+                full_group.append(full_rules_by_key[key])
+
+        aggregates = _compute_file_aggregates(full_group) if full_group else {
+            "selectorPrefixes": [prefix],
+            "customPropertyDeclarations": [],
+            "customPropertyReferences": [],
+            "propertyFrequency": {},
+            "categoryProfile": [0] * len(CATEGORY_ORDER),
+        }
+
+        sub_units.append({
+            "id": f"{file_path}::{prefix}",
+            "filePath": file_path,
+            "prefix": prefix,
+            "ruleCount": len(compact_group),
+            "rules": compact_group,
+            **aggregates,
+        })
+
+    return sub_units
+
+
+# ---------------------------------------------------------------------------
 # Component linking
 # ---------------------------------------------------------------------------
 
@@ -464,6 +538,7 @@ def extract_css(project_root: Path, output_dir: Path) -> None:
     import_map = _build_import_map(code_units_path)
 
     units: list[dict] = []
+    all_prefix_sub_units: list[dict] = []
     total_rules = 0
 
     for css_path in css_files:
@@ -510,6 +585,12 @@ def extract_css(project_root: Path, output_dir: Path) -> None:
         }
         units.append(unit)
 
+        # Build intra-file prefix groups for large files
+        prefix_groups = _group_rules_by_prefix(rules, compact_rules)
+        if prefix_groups:
+            sub_units = _build_prefix_sub_units(prefix_groups, rules, rel_path)
+            all_prefix_sub_units.extend(sub_units)
+
     elapsed = time.time() - t0
 
     result = {
@@ -520,14 +601,17 @@ def extract_css(project_root: Path, output_dir: Path) -> None:
             .isoformat(),
             "fileCount": len(units),
             "totalRules": total_rules,
+            "prefixGroupCount": len(all_prefix_sub_units),
             "extractionTimeMs": int(elapsed * 1000),
         },
         "units": units,
+        "prefixGroups": all_prefix_sub_units,
     }
 
     write_artifact("css-units.json", result, output_dir)
+    prefix_msg = f", {len(all_prefix_sub_units)} prefix groups" if all_prefix_sub_units else ""
     print(
-        f"  Extracted {total_rules} rules from {len(units)} CSS files in {elapsed:.2f}s.",
+        f"  Extracted {total_rules} rules from {len(units)} CSS files{prefix_msg} in {elapsed:.2f}s.",
         file=sys.stderr,
     )
 

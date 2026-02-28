@@ -228,12 +228,42 @@ def _render_css_section(css_clusters: list[dict]) -> list[str]:
     return lines
 
 
+def _render_css_intra_file_section(intra_pairs: list[dict]) -> list[str]:
+    """Render the CSS Intra-File Duplication section."""
+    import os
+
+    lines: list[str] = []
+    lines.append("## CSS Intra-File Duplication")
+    lines.append("")
+
+    # Group pairs by file
+    by_file: dict[str, list[dict]] = {}
+    for pair in intra_pairs:
+        fp = pair.get("filePath", "")
+        by_file.setdefault(fp, []).append(pair)
+
+    for file_path, pairs in sorted(by_file.items()):
+        lines.append(f"### {os.path.basename(file_path)}")
+        lines.append(f"Found {len(pairs)} similar prefix groups within `{file_path}`:")
+        lines.append("")
+        lines.append("| Group A | Group B | Score | Dominant Signal |")
+        lines.append("|---------|---------|-------|-----------------|")
+        for p in pairs:
+            a = f"{p['prefixA']} ({p['rulesA']}r)"
+            b = f"{p['prefixB']} ({p['rulesB']}r)"
+            lines.append(f"| {a} | {b} | {p['score']:.3f} | {p['dominantSignal']} |")
+        lines.append("")
+
+    return lines
+
+
 def _generate_markdown(
     clusters: list[dict],
     units_by_id: dict[str, dict],
     findings_by_cluster: dict[str, dict],
     unit_count: int,
     css_clusters: list[dict] | None = None,
+    css_intra_pairs: list[dict] | None = None,
 ) -> str:
     """Generate the semantic-drift-report.md content."""
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -248,6 +278,8 @@ def _generate_markdown(
         lines.append(f"Verified clusters: {verified_count}")
     if css_clusters:
         lines.append(f"CSS clusters: {len(css_clusters)}")
+    if css_intra_pairs:
+        lines.append(f"CSS intra-file duplicates: {len(css_intra_pairs)}")
     lines.append("")
 
     if findings_by_cluster:
@@ -267,6 +299,11 @@ def _generate_markdown(
     if css_clusters:
         lines.append("")
         lines.extend(_render_css_section(css_clusters))
+
+    # CSS intra-file section
+    if css_intra_pairs:
+        lines.append("")
+        lines.extend(_render_css_intra_file_section(css_intra_pairs))
 
     return "\n".join(lines)
 
@@ -521,8 +558,17 @@ def generate_report(output_dir: Path, manifest_path: Path | None = None) -> None
     if isinstance(raw_css_clusters, list):
         css_clusters = raw_css_clusters
 
+    # Load CSS intra-file pairs (optional)
+    css_intra_pairs: list[dict] = []
+    raw_intra = _load_optional("css-intra-similarity.json", output_dir)
+    if isinstance(raw_intra, list):
+        css_intra_pairs = raw_intra
+
     # Generate markdown report
-    md = _generate_markdown(clusters, units_by_id, findings_by_cluster, len(units), css_clusters)
+    md = _generate_markdown(
+        clusters, units_by_id, findings_by_cluster, len(units),
+        css_clusters, css_intra_pairs,
+    )
     report_path = output_dir / "semantic-drift-report.md"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     with open(report_path, "w", encoding="utf-8") as f:

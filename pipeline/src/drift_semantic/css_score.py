@@ -325,11 +325,77 @@ def _enrich_css_cluster(  # noqa: C901, PLR0912
 
 
 # ---------------------------------------------------------------------------
+# Intra-file scoring
+# ---------------------------------------------------------------------------
+
+
+def compute_intra_file_scores(output_dir: Path, threshold: float = 0.40) -> None:
+    """Score prefix group pairs within each CSS file.
+
+    Reads prefixGroups from css-units.json and compares groups within
+    the same file using the same signal functions as inter-file scoring.
+    Writes css-intra-similarity.json.
+    """
+    raw = read_artifact("css-units.json", output_dir)
+    prefix_groups = raw.get("prefixGroups", []) if isinstance(raw, dict) else []
+
+    if not prefix_groups:
+        print("  No prefix groups for intra-file scoring.", file=sys.stderr)
+        return
+
+    # Group sub-units by file
+    by_file: dict[str, list[dict]] = {}
+    for pg in prefix_groups:
+        fp = pg["filePath"]
+        by_file.setdefault(fp, []).append(pg)
+
+    scored_pairs: list[dict] = []
+    total_compared = 0
+
+    for file_path, groups in by_file.items():
+        # Only score files with multiple groups
+        n = len(groups)
+        if n < 2:  # noqa: PLR2004
+            continue
+
+        for i in range(n):
+            for j in range(i + 1, n):
+                total_compared += 1
+                score, signals = _score_pair(groups[i], groups[j])
+
+                if score >= threshold:
+                    dominant = max(signals, key=lambda s: signals[s]) if signals else ""
+                    scored_pairs.append(
+                        {
+                            "unitA": groups[i]["id"],
+                            "unitB": groups[j]["id"],
+                            "prefixA": groups[i]["prefix"],
+                            "prefixB": groups[j]["prefix"],
+                            "rulesA": groups[i]["ruleCount"],
+                            "rulesB": groups[j]["ruleCount"],
+                            "score": round(score, 4),
+                            "signals": {k: round(v, 4) for k, v in signals.items()},
+                            "dominantSignal": dominant,
+                            "filePath": file_path,
+                        }
+                    )
+
+    scored_pairs.sort(key=lambda p: p["score"], reverse=True)
+    print(
+        f"  Intra-file: compared {total_compared} prefix pairs, "
+        f"{len(scored_pairs)} above threshold {threshold}.",
+        file=sys.stderr,
+    )
+    write_artifact("css-intra-similarity.json", scored_pairs, output_dir)
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
 
 def run(output_dir: Path, threshold: float = 0.40) -> None:
-    """Entry point: score CSS pairs and cluster."""
+    """Entry point: score CSS pairs, intra-file groups, and cluster."""
     compute_css_scores(output_dir, threshold)
+    compute_intra_file_scores(output_dir, threshold)
     compute_css_clusters(output_dir, threshold)

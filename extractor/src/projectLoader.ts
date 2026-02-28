@@ -11,23 +11,39 @@ export interface LoadedProjects {
   seenFiles: Set<string>;
 }
 
-/** Glob for tsconfig files under apps/ and packages/, excluding noise. */
+/** Directories to skip when walking the project tree. */
+const SKIP_DIRS = new Set([
+  "node_modules",
+  "dist",
+  ".turbo",
+  ".next",
+  "build",
+  "coverage",
+  ".git",
+  "__pycache__",
+  ".venv",
+  "venv",
+  ".drift-audit",
+]);
+
+const SOURCE_EXTS = /\.(ts|tsx|js|jsx)$/;
+
+/** Walk the project tree for tsconfig files, skipping noise directories. */
 function findTsconfigFiles(projectRoot: string): string[] {
   const results: string[] = [];
-  const searchDirs = ["apps", "packages"];
-
-  for (const dir of searchDirs) {
-    const base = path.join(projectRoot, dir);
-    if (!fs.existsSync(base)) continue;
-    walkForTsconfigs(base, results);
-  }
+  walkForTsconfigs(projectRoot, results);
   return results;
 }
 
 function walkForTsconfigs(dir: string, results: string[]): void {
-  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return; // Permission denied, etc.
+  }
   for (const entry of entries) {
-    if (entry.name === "node_modules" || entry.name === "dist" || entry.name === ".turbo") continue;
+    if (SKIP_DIRS.has(entry.name)) continue;
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       walkForTsconfigs(full, results);
@@ -38,70 +54,65 @@ function walkForTsconfigs(dir: string, results: string[]): void {
 }
 
 /**
- * Check whether a tsconfig's include patterns cover a given directory.
- * Returns true if any include glob, resolved relative to the tsconfig's dir,
- * would match files inside `targetDir`.
- */
-function tsconfigCovers(tsconfigPath: string, targetDir: string): boolean {
-  try {
-    const raw = JSON.parse(fs.readFileSync(tsconfigPath, "utf-8"));
-    const includes: string[] = raw.include ?? [];
-    const tsconfigDir = path.dirname(tsconfigPath);
-
-    for (const pattern of includes) {
-      // Resolve the include pattern base relative to tsconfig dir
-      // eslint-disable-next-line sonarjs/slow-regex -- operates on short tsconfig include patterns, no ReDoS risk
-      const patternBase = pattern.replace(/\/\*.*$/, "").replace(/\*.*$/, "");
-      const resolved = path.resolve(tsconfigDir, patternBase);
-      // If the resolved base IS or is a parent of targetDir, it covers it
-      const rel = path.relative(resolved, targetDir);
-      if (!rel.startsWith("..") && !path.isAbsolute(rel)) {
-        return true;
-      }
-    }
-    return false;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Find webui/src directories containing .jsx/.tsx files that are NOT covered
- * by any discovered tsconfig.
- */
-function findUncoveredWebuis(projectRoot: string, tsconfigPaths: string[]): string[] {
-  const uncovered: string[] = [];
-  const searchDirs = ["apps", "packages"];
-
-  for (const dir of searchDirs) {
-    const base = path.join(projectRoot, dir);
-    if (!fs.existsSync(base)) continue;
-
-    const appDirs = fs.readdirSync(base, { withFileTypes: true });
-    for (const appDir of appDirs) {
-      if (!appDir.isDirectory()) continue;
-      const webuiSrc = path.join(base, appDir.name, "webui", "src");
-      if (!fs.existsSync(webuiSrc)) continue;
-
-      // Check if any tsconfig covers this webui/src directory
-      const covered = tsconfigPaths.some((tc) => tsconfigCovers(tc, webuiSrc));
-      if (!covered) {
-        uncovered.push(path.join(base, appDir.name, "webui"));
-      }
-    }
-  }
-  return uncovered;
-}
-
-/**
- * Load all TypeScript/JavaScript projects from the monorepo.
+ * Find directories containing source files not covered by any tsconfig.
  *
- * - Creates a ts-morph Project for each tsconfig.json / tsconfig.app.json
- * - For webui directories not covered by any tsconfig, creates an ad-hoc Project
- *   with allowJs + JSX support
- * - Returns projects and a set of seen absolute file paths for deduplication
+ * Walks the project tree looking for .ts/.tsx/.js/.jsx files. For each file
+ * not in seenFiles, records its parent directory. Returns the minimal set of
+ * root directories that contain uncovered source files.
  */
-// eslint-disable-next-line sonarjs/cognitive-complexity -- sequential project loading with tsconfig resolution and fallback
+function findUncoveredSourceDirs(
+  projectRoot: string,
+  seenFiles: Set<string>,
+): string[] {
+  const uncoveredDirs = new Set<string>();
+  walkForUncoveredSources(projectRoot, seenFiles, uncoveredDirs);
+
+  // Reduce to root-level source dirs: if both /a and /a/b are collected,
+  // keep only /a (it will be scanned recursively).
+  const sorted = [...uncoveredDirs].sort();
+  const roots: string[] = [];
+  for (const dir of sorted) {
+    const isNested = roots.some(
+      (root) => dir.startsWith(root + path.sep) || dir === root,
+    );
+    if (!isNested) {
+      roots.push(dir);
+    }
+  }
+  return roots;
+}
+
+function walkForUncoveredSources(
+  dir: string,
+  seenFiles: Set<string>,
+  uncoveredDirs: Set<string>,
+): void {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (SKIP_DIRS.has(entry.name)) continue;
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      walkForUncoveredSources(full, seenFiles, uncoveredDirs);
+    } else if (SOURCE_EXTS.test(entry.name) && !seenFiles.has(full)) {
+      uncoveredDirs.add(dir);
+    }
+  }
+}
+
+/**
+ * Load all TypeScript/JavaScript projects from any directory structure.
+ *
+ * 1. Walks the entire project tree for tsconfig.json / tsconfig.app.json
+ * 2. Creates a ts-morph Project for each (preferring tsconfig.app.json)
+ * 3. For source directories not covered by any tsconfig, creates ad-hoc
+ *    Projects with allowJs + JSX support
+ * 4. Returns projects and a set of seen absolute file paths for deduplication
+ */
 export function loadProjects(projectRoot: string): LoadedProjects {
   const tsconfigPaths = findTsconfigFiles(projectRoot);
   const seenFiles = new Set<string>();
@@ -144,10 +155,11 @@ export function loadProjects(projectRoot: string): LoadedProjects {
     }
   }
 
-  // Find and create ad-hoc projects for uncovered webui directories
-  const uncoveredWebuis = findUncoveredWebuis(projectRoot, selectedTsconfigs);
+  // Find and create ad-hoc projects for directories with source files
+  // not covered by any tsconfig
+  const uncoveredDirs = findUncoveredSourceDirs(projectRoot, seenFiles);
 
-  for (const webuiDir of uncoveredWebuis) {
+  for (const srcDir of uncoveredDirs) {
     try {
       const project = new Project({
         compilerOptions: {
@@ -163,22 +175,18 @@ export function loadProjects(projectRoot: string): LoadedProjects {
         },
       });
 
-      // Add all .js/.jsx/.ts/.tsx files from the webui/src directory
-      const srcDir = path.join(webuiDir, "src");
-      if (fs.existsSync(srcDir)) {
-        addSourceFilesRecursively(project, srcDir, seenFiles);
-      }
+      addSourceFilesRecursively(project, srcDir, seenFiles);
 
       const sourceFiles = project.getSourceFiles();
       if (sourceFiles.length > 0) {
         projects.push(project);
         process.stderr.write(
-          `  ad-hoc:   ${path.relative(projectRoot, webuiDir)}/src → ${sourceFiles.length} files\n`
+          `  ad-hoc:   ${path.relative(projectRoot, srcDir)} → ${sourceFiles.length} files\n`
         );
       }
     } catch (err) {
       process.stderr.write(
-        `  WARN: failed to create ad-hoc project for ${path.relative(projectRoot, webuiDir)}: ${err}\n`
+        `  WARN: failed to create ad-hoc project for ${path.relative(projectRoot, srcDir)}: ${err}\n`
       );
     }
   }
@@ -187,14 +195,19 @@ export function loadProjects(projectRoot: string): LoadedProjects {
 }
 
 function addSourceFilesRecursively(project: Project, dir: string, seenFiles: Set<string>): void {
-  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
   for (const entry of entries) {
-    if (entry.name === "node_modules" || entry.name === "dist") continue;
+    if (SKIP_DIRS.has(entry.name)) continue;
     const full = path.join(dir, entry.name);
 
     if (entry.isDirectory()) {
       addSourceFilesRecursively(project, full, seenFiles);
-    } else if (/\.(ts|tsx|js|jsx)$/.test(entry.name) && !seenFiles.has(full)) {
+    } else if (SOURCE_EXTS.test(entry.name) && !seenFiles.has(full)) {
       try {
         project.addSourceFileAtPath(full);
         seenFiles.add(full);
