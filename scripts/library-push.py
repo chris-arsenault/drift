@@ -150,12 +150,8 @@ def publish(config_path: Path) -> None:
     lib_path = resolve_library_path(config.get("library", "~/.drift/library"))
     sync_map = config.get("sync", {})
 
-    # Derive project name
-    pkg_json = project_root / "package.json"
-    if pkg_json.exists():
-        project_name = load_json(pkg_json).get("name", project_root.name)
-    else:
-        project_name = project_root.name
+    # Use directory basename as project identity
+    project_name = project_root.name
 
     if not lib_path.exists() or not (lib_path / "library.json").exists():
         print(f"[-] Library not found at {lib_path}", file=sys.stderr)
