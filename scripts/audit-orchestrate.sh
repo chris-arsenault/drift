@@ -21,7 +21,6 @@
 #   --model <model>        Override Claude model for analytical steps
 #   --skip-to <N>          Skip to step N (verifies prior gates)
 #   --max-turns <N>        Max agentic turns per Claude call (default: 200)
-#   --verbose              Stream all output to terminal (always logged to audit.log)
 #   --dry-run              Print what would run without executing
 
 set -euo pipefail
@@ -91,7 +90,6 @@ Options:
   --model <model>        Override Claude model for analytical steps
   --skip-to <N>          Skip to step N (verifies prior gates pass)
   --max-turns <N>        Max agentic turns per Claude call (default: 200)
-  --verbose              Stream all output to terminal (always logged to audit.log)
   --dry-run              Print what would run without executing
   -h, --help             Show this help
 USAGE
@@ -102,12 +100,8 @@ USAGE
 # ---------------------------------------------------------------------------
 
 _log() {
-    # Pipe all command output to log file; with --verbose also to terminal.
-    if [[ "${VERBOSE:-0}" -eq 1 ]]; then
-        tee -a "$LOG_FILE"
-    else
-        cat >> "$LOG_FILE"
-    fi
+    # Log everything and show on terminal.
+    tee -a "$LOG_FILE" >&2
 }
 
 _strip_frontmatter() {
@@ -752,7 +746,6 @@ PROJECT_ROOT=""
 MODEL=""
 SKIP_TO=0
 MAX_TURNS="200"
-VERBOSE=0
 DRY_RUN=0
 
 while [[ $# -gt 0 ]]; do
@@ -760,7 +753,6 @@ while [[ $# -gt 0 ]]; do
         --model)      MODEL="$2"; shift 2 ;;
         --skip-to)    SKIP_TO="$2"; shift 2 ;;
         --max-turns)  MAX_TURNS="$2"; shift 2 ;;
-        --verbose)    VERBOSE=1; shift ;;
         --dry-run)    DRY_RUN=1; shift ;;
         -h|--help)    usage; exit 0 ;;
         *)
@@ -828,7 +820,6 @@ info "Drift:   $DRIFT_HOME"
 info "Log:     $LOG_FILE"
 [[ -n "$MODEL" ]] && info "Model:   $MODEL"
 [[ "$SKIP_TO" -gt 0 ]] && info "Skip to: step $SKIP_TO"
-[[ "$VERBOSE" -eq 1 ]] && info "Verbose: on"
 echo "" >&2
 
 # Verify skip-to gates

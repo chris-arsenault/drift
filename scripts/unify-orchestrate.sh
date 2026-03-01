@@ -12,7 +12,6 @@
 #   --area <id>            Only unify this specific area
 #   --model <model>        Override Claude model
 #   --max-turns <N>        Max agentic turns per Claude call (default: 200)
-#   --verbose              Pass --verbose to claude
 #   --dry-run              Print what would run without executing
 
 set -euo pipefail
@@ -64,7 +63,6 @@ Options:
   --area <id>            Only unify this specific area
   --model <model>        Override Claude model for unify calls
   --max-turns <N>        Max agentic turns per Claude call (default: 200)
-  --verbose              Stream verbose output
   --dry-run              Print what would run without executing
   -h, --help             Show this help
 USAGE
@@ -93,11 +91,7 @@ _gen_uuid() {
 }
 
 _log() {
-    if [[ "${VERBOSE:-0}" -eq 1 ]]; then
-        tee -a "$LOG_FILE"
-    else
-        cat >> "$LOG_FILE"
-    fi
+    tee -a "$LOG_FILE" >&2
 }
 
 # ---------------------------------------------------------------------------
@@ -302,7 +296,6 @@ PROJECT_ROOT=""
 MODEL=""
 AREA_FILTER=""
 MAX_TURNS="200"
-VERBOSE=0
 DRY_RUN=0
 
 while [[ $# -gt 0 ]]; do
@@ -310,7 +303,6 @@ while [[ $# -gt 0 ]]; do
         --area)       AREA_FILTER="$2"; shift 2 ;;
         --model)      MODEL="$2"; shift 2 ;;
         --max-turns)  MAX_TURNS="$2"; shift 2 ;;
-        --verbose)    VERBOSE=1; shift ;;
         --dry-run)    DRY_RUN=1; shift ;;
         -h|--help)    usage; exit 0 ;;
         *)
