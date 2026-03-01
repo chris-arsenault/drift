@@ -721,6 +721,22 @@ case "$COMMAND" in
     unify)
         exec bash "$DRIFT_HOME/scripts/unify-orchestrate.sh" "$@"
         ;;
+    guide)
+        cat >&2 <<'GUIDE'
+drift guide — step-by-step pipeline
+
+  1. drift install-skill .          Install skills + config
+  2. drift audit .                  Run full audit (7 steps)
+  3. drift plan .                   Build prioritized attack plan
+  4. drift unify .                  Unify + guard all planned areas
+  5. drift verify .                 Check markers, ESLint wiring, ADR refs
+  6. drift library push             Push guard artifacts to library
+
+Resume a failed audit:   drift audit . --skip-to <step>
+Process one area:        drift unify . --area <id>
+Re-audit after changes:  drift audit .
+GUIDE
+        ;;
     online)
         drift_online "$@"
         ;;

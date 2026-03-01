@@ -23,11 +23,10 @@ Parse the user's invocation to determine which phase to run:
 
 | Invocation | Phase | What runs |
 |-----------|-------|-----------|
-| `/drift` or "run the drift pipeline" | `full` | audit → plan → unify → guard |
+| `/drift` or "run the drift pipeline" | `full` | audit → plan → unify+guard |
 | `/drift audit` or "audit for drift" | `audit` | All three audits, then stop |
 | `/drift plan` or "show drift plan" / "what should I unify next" | `plan` | Prioritize and present, then stop |
-| `/drift unify` or "unify drift" / "fix drift" | `unify` | Unify planned areas, then stop |
-| `/drift guard` or "guard against drift" / "lock patterns" | `guard` | Guard completed areas, then stop |
+| `/drift unify` or "unify drift" / "fix drift" | `unify` | Unify + guard per area (atomic), then stop |
 
 Each phase runs ONLY that phase and stops. `/drift` (no args) runs all phases sequentially.
 
@@ -146,13 +145,14 @@ Phase values: `pending` (in manifest but not yet planned), `planned` (approved f
 
 ---
 
-## Phase: Unify
+## Phase: Unify + Guard (atomic)
 
-Run the deterministic unify orchestrator. This script loops through eligible areas,
-builds per-area work files, and calls `claude -p` once per area with an execution-framed
-prompt that prevents the LLM from re-evaluating whether unification is warranted.
+Run the deterministic orchestrator. For each eligible area, the script runs
+unify (refactor to canonical) then immediately guard (generate lint rules + ADRs)
+in the same cycle. This is atomic per area — the guard agent has full context of
+what was just refactored.
 
-### Run the Unify
+### Run It
 
 ```bash
 drift unify "$PROJECT_ROOT"
@@ -164,121 +164,41 @@ This processes all eligible areas (phase=`planned`, dependencies met) in rank or
 |------|------|------|
 | 1 | Read attack plan, filter eligible areas | deterministic |
 | 2 | For each area: build work file from manifest | deterministic |
-| 3 | For each area: `claude -p` with focused prompt | `claude -p` × N |
-| 4 | For each area: gate on actual file changes | deterministic |
-| 5 | For each area: update plan (→guard) + manifest | deterministic |
-| 6 | Summary | deterministic |
+| 3 | For each area: `claude -p` unify (execution-framed) | `claude -p` |
+| 4 | Gate: verify files were actually modified | deterministic |
+| 5 | For each area: `claude -p` guard (lint rules + ADRs) | `claude -p` |
+| 6 | Gate: verify guard artifacts created | deterministic |
+| 7 | Finalize: plan-update --finalize (→completed) | deterministic |
+| 8 | After all areas: `drift verify` | deterministic |
 
-Each `claude -p` call gets a pre-built work file containing the area's variants,
-files, code excerpts, recommendation, and canonical pattern. The prompt frames the
+Each unify `claude -p` call gets a pre-built work file. The prompt frames the
 task as execution, not evaluation — Claude cannot skip areas or batch-close them.
 
+Each guard `claude -p` call gets the same work file plus the list of files just
+modified by the unify step, so it knows exactly what was changed and can write
+accurate lint rules and ADRs.
+
+Phase transitions:
+- `planned` → `completed` (happy path, unify+guard both succeed)
+- `planned` → `guard` (unify succeeded, guard failed — retry with `--area`)
+
 Options:
-- `--area <id>` — only unify this specific area
+- `--area <id>` — only process this specific area
 - `--model <model>` — override the Claude model
 - `--max-turns <N>` — max agentic turns per Claude call (default: 200)
-- `--verbose` — stream verbose output
 - `--dry-run` — print what would run without executing
 
-Unify a single area: `drift unify "$PROJECT_ROOT" --area <area-id>`
+Process a single area: `drift unify "$PROJECT_ROOT" --area <area-id>`
 
-Wait for the unify to complete before proceeding to the Guard phase.
+Areas in `guard` phase (from a previous failed guard) are automatically retried —
+the orchestrator skips the unify step and goes straight to guard.
 
 ---
 
-## Phase: Guard
+## Phase: Verify
 
-Generate enforcement artifacts for all unified areas. **Hard enforcement (lint rules) comes
-first and is mandatory. Documentation (ADRs, guides) comes second.**
-
-Read `$DRIFT_SEMANTIC/skill/drift-guard/SKILL.md` and follow its two-phase methodology.
-
-### Step 1: Generate Hard Enforcement for ALL Areas
-
-1. Read `.drift-audit/attack-plan.json`
-2. Find all areas where `phase` is `guard`
-3. For EVERY area, generate lint rules BEFORE writing any documentation:
-
-**Per-area rule generation:**
-
-**a. Read the canonical pattern** (now the only pattern, post-unification).
-
-**b. Read 1-2 old variant files** (from git history or unification log) to understand
-what to ban.
-
-**c. Generate ESLint rules** — at minimum one of:
-   - `no-restricted-imports` banning non-canonical module paths
-   - `no-restricted-syntax` banning old code patterns via AST selectors
-   - Custom rule module for complex detection logic
-   Use `warn` severity initially.
-
-**d. Generate ast-grep rules** if the project uses ast-grep — for structural patterns
-that ESLint selectors can't express.
-
-**e. Apply TypeScript config changes** if tighter types prevent the drift
-(e.g., `paths` aliases to enforce canonical import paths).
-
-### Step 2: Wire All Rules and Verify
-
-After generating rules for ALL areas (not one at a time):
-
-1. Update the ESLint config to import and enable every new rule.
-2. Run ESLint and report violation counts per rule.
-3. If zero violations for a rule, verify it's actually matching (could indicate
-   the rule isn't loaded or the selector is wrong).
-
-Present the enforcement scoreboard:
-```
-Guard Enforcement:
-  Areas guarded:        N/N
-  ESLint rules:         N (M violations found)
-  ast-grep rules:       N
-  Config changes:       N
-```
-
-If any area has NO enforceable rule, explain specifically why to the user.
-
-### Step 3: Generate Documentation for ALL Areas
-
-Only after all rules are wired and verified.
-
-**Every markdown file you create MUST start with `<!-- drift-generated -->` on line 1.**
-Files without this marker won't sync to the library. This applies to ADRs, pattern docs,
-and checklists — no exceptions.
-
-**a. Write an ADR** for each area — first line `<!-- drift-generated -->`, then the
-ADR content. The Enforcement section MUST reference the specific rule names created
-in Step 1.
-
-**b. Write/update pattern guide** — first line `<!-- drift-generated -->`, then
-practical usage guide in `docs/patterns/`.
-
-**c. Update review checklist** — first line `<!-- drift-generated -->`, then
-drift-specific items covering what lint rules cannot catch (semantic correctness,
-architectural intent, edge cases).
-
-### Step 4: Finalize Areas in Plan
-
-For each guarded area, finalize it in the plan and manifest:
-
-```bash
-drift plan-update "$PROJECT_ROOT" --finalize <area-id> --guard-artifacts file1.js docs/adr/001.md ...
-```
-
-This script sets the plan entry's phase to `completed`, records the guard artifacts list,
-and updates the manifest area status to `completed`.
-
-Present consolidated summary:
-- ESLint rules created per area with violation counts
-- ast-grep rules created
-- Config changes made
-- ADRs written (with enforcement section referencing rules)
-- Pattern docs written
-- Recommended rollout (warn → fix → error → CI)
-
-### Step 5: Verify All Guard Artifacts
-
-Run the full verification suite to confirm everything is wired correctly:
+After all areas are processed, the orchestrator runs `drift verify` automatically.
+You can also run it standalone:
 
 ```bash
 drift verify "$PROJECT_ROOT"
@@ -313,17 +233,15 @@ When invoked with no phase argument, run all phases in sequence:
 
 1. **Audit** — `drift audit "$PROJECT_ROOT"` (deterministic orchestrator with gates)
 2. **Plan** — `drift plan "$PROJECT_ROOT"` then present to user for approval/reordering
-3. **Unify** — resolve all planned areas autonomously
-4. **Guard** — generate enforcement for all unified areas
-5. **Finalize** — `drift plan-update "$PROJECT_ROOT" --finalize <id> --guard-artifacts ...` per area
-6. **Verify** — `drift verify "$PROJECT_ROOT"` (markers + ESLint + ADR checks). Fix any failures.
-7. **Library Push** — if `.drift-audit/config.json` has `"mode": "online"`, run
+3. **Unify + Guard** — `drift unify "$PROJECT_ROOT"` (atomic per area)
+4. **Verify** — runs automatically at end of step 3; fix any failures
+5. **Library Push** — if `.drift-audit/config.json` has `"mode": "online"`, run
    `drift library push` to share guard artifacts to the centralized library.
    Check the push output for skipped files — any skipped file is a bug to fix.
-8. **Summary** — present full pipeline results
+6. **Summary** — present full pipeline results
 
 The plan phase is the one human checkpoint in the full pipeline. After the user
-approves the plan, unify and guard run autonomously with a summary at the end.
+approves the plan, unify+guard runs autonomously with a summary at the end.
 
 ---
 
