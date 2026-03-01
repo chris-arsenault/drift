@@ -164,19 +164,15 @@ This processes all eligible areas (phase=`planned`, dependencies met) in rank or
 |------|------|------|
 | 1 | Read attack plan, filter eligible areas | deterministic |
 | 2 | For each area: build work file from manifest | deterministic |
-| 3 | For each area: `claude -p` unify (execution-framed) | `claude -p` |
-| 4 | Gate: verify files were actually modified | deterministic |
-| 5 | For each area: `claude -p` guard (lint rules + ADRs) | `claude -p` |
-| 6 | Gate: verify guard artifacts created | deterministic |
-| 7 | Finalize: plan-update --finalize (→completed) | deterministic |
-| 8 | After all areas: `drift verify` | deterministic |
+| 3 | For each area: `claude -p` unify+guard (single call) | `claude -p` × N |
+| 4 | Gate: verify files modified + guard artifacts created | deterministic |
+| 5 | Finalize: plan-update --finalize (→completed) | deterministic |
+| 6 | After all areas: `drift verify` | deterministic |
 
-Each unify `claude -p` call gets a pre-built work file. The prompt frames the
-task as execution, not evaluation — Claude cannot skip areas or batch-close them.
-
-Each guard `claude -p` call gets the same work file plus the list of files just
-modified by the unify step, so it knows exactly what was changed and can write
-accurate lint rules and ADRs.
+Each `claude -p` call gets a pre-built work file and a combined prompt that
+covers both unification and guard artifact generation. The agent refactors first,
+then generates lint rules and ADRs in the same session — retaining full context
+of what it just changed. The prompt frames the task as execution, not evaluation.
 
 Phase transitions:
 - `planned` → `completed` (happy path, unify+guard both succeed)

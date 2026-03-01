@@ -407,11 +407,10 @@ for e in entries:
         continue
     deps = e.get('depends_on', [])
     if all(d in completed_ids for d in deps):
-        # Output: area_id<TAB>phase (so we know whether to skip unify)
-        eligible.append(f\"{e['area_id']}\t{phase}\")
+        eligible.append(e['area_id'])
 
-for line in eligible:
-    print(line)
+for aid in eligible:
+    print(aid)
 " "$PLAN" "${AREA_FILTER:-}" 2>/dev/null)"
 
 if [[ -z "$ELIGIBLE" ]]; then
@@ -440,66 +439,63 @@ info "$ELIGIBLE_COUNT eligible area(s)."
 echo "" >&2
 
 # ---------------------------------------------------------------------------
-# Main loop: unify + guard atomic per area
+# Main loop: single claude -p call per area (unify + guard in one session)
 # ---------------------------------------------------------------------------
 
 COMPLETED=0
 FAILED=0
 
-while IFS=$'\t' read -r area_id area_phase; do
+while IFS= read -r area_id; do
+    step_header "UNIFY+GUARD: $area_id"
 
-    # ------------------------------------------------------------------
-    # Phase 1: UNIFY (skip if area is already in guard phase — retry)
-    # ------------------------------------------------------------------
+    # Build work file
+    local_work_file="$WORK_DIR/unify-work-${area_id}.json"
+    work_meta="$(_build_work_file "$area_id" "$local_work_file")"
 
-    if [[ "$area_phase" == "guard" ]]; then
-        info "$area_id: already unified (phase=guard), skipping to guard."
-    else
-        step_header "UNIFY: $area_id"
+    if [[ $? -ne 0 ]]; then
+        error "Failed to build work file for $area_id"
+        FAILED=$((FAILED + 1))
+        continue
+    fi
 
-        # Build work file
-        local_work_file="$WORK_DIR/unify-work-${area_id}.json"
-        work_meta="$(_build_work_file "$area_id" "$local_work_file")"
+    # Parse work file metadata
+    area_name="$(echo "$work_meta" | python3 -c "import json,sys; print(json.load(sys.stdin).get('area_name','?'))" 2>/dev/null || echo "$area_id")"
+    area_type="$(echo "$work_meta" | python3 -c "import json,sys; print(json.load(sys.stdin).get('type','?'))" 2>/dev/null || echo "?")"
+    area_impact="$(echo "$work_meta" | python3 -c "import json,sys; print(json.load(sys.stdin).get('impact','?'))" 2>/dev/null || echo "?")"
+    canonical_name="$(echo "$work_meta" | python3 -c "import json,sys; print(json.load(sys.stdin).get('canonical','?'))" 2>/dev/null || echo "?")"
+    canonical_files="$(echo "$work_meta" | python3 -c "import json,sys; print(' '.join(json.load(sys.stdin).get('canonical_files',[])))" 2>/dev/null || echo "")"
+    migrate_count="$(echo "$work_meta" | python3 -c "import json,sys; print(json.load(sys.stdin).get('migrate_count',0))" 2>/dev/null || echo "0")"
+    total_files="$(echo "$work_meta" | python3 -c "import json,sys; print(json.load(sys.stdin).get('total_files',0))" 2>/dev/null || echo "0")"
 
-        if [[ $? -ne 0 ]]; then
-            error "Failed to build work file for $area_id"
-            FAILED=$((FAILED + 1))
-            continue
-        fi
+    info "$area_name ($area_type, $area_impact)"
+    info "Canonical: $canonical_name"
+    info "Files to migrate: $migrate_count (of $total_files total)"
 
-        # Parse work file metadata
-        area_name="$(echo "$work_meta" | python3 -c "import json,sys; print(json.load(sys.stdin).get('area_name','?'))" 2>/dev/null || echo "$area_id")"
-        area_type="$(echo "$work_meta" | python3 -c "import json,sys; print(json.load(sys.stdin).get('type','?'))" 2>/dev/null || echo "?")"
-        area_impact="$(echo "$work_meta" | python3 -c "import json,sys; print(json.load(sys.stdin).get('impact','?'))" 2>/dev/null || echo "?")"
-        canonical_name="$(echo "$work_meta" | python3 -c "import json,sys; print(json.load(sys.stdin).get('canonical','?'))" 2>/dev/null || echo "?")"
-        canonical_files="$(echo "$work_meta" | python3 -c "import json,sys; print(' '.join(json.load(sys.stdin).get('canonical_files',[])))" 2>/dev/null || echo "")"
-        migrate_count="$(echo "$work_meta" | python3 -c "import json,sys; print(json.load(sys.stdin).get('migrate_count',0))" 2>/dev/null || echo "0")"
-        total_files="$(echo "$work_meta" | python3 -c "import json,sys; print(json.load(sys.stdin).get('total_files',0))" 2>/dev/null || echo "0")"
+    if [[ "$canonical_name" == "NONE" ]]; then
+        warn "No canonical variant set — Claude will pick based on recommendation."
+    fi
 
-        info "$area_name ($area_type, $area_impact)"
-        info "Canonical: $canonical_name"
-        info "Files to migrate: $migrate_count (of $total_files total)"
+    # Snapshot existing guard artifacts before the call
+    guard_before_file="$(mktemp)"
+    _snapshot_guard_files > "$guard_before_file"
 
-        if [[ "$canonical_name" == "NONE" ]]; then
-            warn "No canonical variant set — Claude will pick based on recommendation."
-        fi
-
-        # Build unify prompt
-        unify_prompt="You are executing a drift unification for: $PROJECT_ROOT
+    # Build combined unify+guard prompt — single session, full context retained
+    prompt="You are executing a drift unification AND generating guard artifacts for: $PROJECT_ROOT
 
 AREA: $area_name ($area_type, $area_impact impact)
 AREA ID: $area_id
 WORK FILE: $local_work_file
 
 THE AUDIT HAS DETERMINED THIS IS A CONSOLIDATION TARGET.
-Your job is to EXECUTE the refactoring, not to re-evaluate whether it's needed.
+Your job is to EXECUTE the refactoring and then GUARD the result — not to
+re-evaluate whether it's needed.
 Do not skip this area. Do not batch-close it. Do not dismiss it as 'different components.'
-The audit already verified these are variant implementations of the same concern.
 
 CANONICAL PATTERN: $canonical_name
 CANONICAL FILES: $canonical_files
 
-YOUR TASK:
+===== PART 1: UNIFY =====
+
 1. Read the work file at $local_work_file — it contains the full area context,
    all variant details, files, code excerpts, and the recommendation
 2. Read the canonical implementation files to understand the target pattern
@@ -519,7 +515,7 @@ YOUR TASK:
    ### Intentional Exceptions
    - path — why NOT converted (if any)
 
-RULES:
+UNIFY RULES:
 - You MUST make actual file edits. Completing with zero file changes is a failure.
 - DO NOT skip files because 'they serve different purposes' or 'they are different components.'
   The audit identified these as drift — variant implementations of the SAME concern.
@@ -531,95 +527,20 @@ RULES:
 - If a file genuinely CANNOT be migrated (breaks third-party contract, etc.),
   document it as an intentional exception in UNIFICATION_LOG.md with a specific reason.
 
-Environment: DRIFT_SEMANTIC=$DRIFT_HOME
+===== PART 2: GUARD (after unification is complete) =====
 
-DELIVERABLES:
-- Modified source files (the actual refactoring)
-- Appended entry in $PROJECT_ROOT/UNIFICATION_LOG.md"
+Once all files are refactored, generate guard artifacts to prevent this drift
+from returning. You have full context from the unification you just performed.
 
-        # Call Claude for unify
-        _claude_call "unify: $area_id" \
-            "$DRIFT_HOME/skill/drift-unify/SKILL.md" \
-            "$unify_prompt" \
-            "--session-id $(_gen_uuid)" || {
-            error "Unification failed for $area_id"
-            FAILED=$((FAILED + 1))
-            continue
-        }
-
-        # Dry-run: skip gates and updates
-        if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
-            COMPLETED=$((COMPLETED + 1))
-            continue
-        fi
-
-        # Gate: check if any files were actually modified
-        changed_files="$(cd "$PROJECT_ROOT" && git diff --name-only 2>/dev/null || true)"
-        changed_count="$(echo "$changed_files" | grep -c . || echo "0")"
-
-        if [[ "$changed_count" -eq 0 ]]; then
-            warn "$area_id: Claude completed but changed zero files. Keeping as planned."
-            FAILED=$((FAILED + 1))
-            continue
-        fi
-
-        info "$area_id: $changed_count file(s) modified by unify."
-        success "Unify complete for $area_id."
-    fi
-
-    # ------------------------------------------------------------------
-    # Phase 2: GUARD (immediate, same area)
-    # ------------------------------------------------------------------
-
-    step_header "GUARD: $area_id"
-
-    # Ensure work file exists (might not if we're retrying guard-only)
-    local_work_file="$WORK_DIR/unify-work-${area_id}.json"
-    if [[ ! -f "$local_work_file" ]]; then
-        _build_work_file "$area_id" "$local_work_file" >/dev/null 2>&1
-    fi
-
-    # Read area metadata from work file for the guard prompt
-    area_name="$(python3 -c "import json; w=json.load(open('$local_work_file')); print(w.get('area_name','?'))" 2>/dev/null || echo "$area_id")"
-    area_type="$(python3 -c "import json; w=json.load(open('$local_work_file')); print(w.get('type','?'))" 2>/dev/null || echo "?")"
-    canonical_name="$(python3 -c "import json; w=json.load(open('$local_work_file')); print(w.get('canonical_variant',{}).get('name','?') if w.get('canonical_variant') else '?')" 2>/dev/null || echo "?")"
-
-    # Snapshot existing guard artifacts before the call
-    guard_before_file="$(mktemp)"
-    _snapshot_guard_files > "$guard_before_file"
-
-    # Get the list of files changed by unify (for guard context)
-    changed_files="$(cd "$PROJECT_ROOT" && git diff --name-only 2>/dev/null || true)"
-
-    # Build guard prompt — guard agent gets full context of what was just unified
-    guard_prompt="You are generating guard artifacts for a just-unified drift area in: $PROJECT_ROOT
-
-AREA: $area_name ($area_type)
-AREA ID: $area_id
-WORK FILE: $local_work_file (contains canonical pattern, variants, all context)
-UNIFICATION LOG: $PROJECT_ROOT/UNIFICATION_LOG.md (details of what was just changed)
-
-FILES MODIFIED BY UNIFICATION:
-$changed_files
-
-THE UNIFICATION IS COMPLETE. Your job is to create enforceable guardrails
-that prevent this drift from returning. Do not re-evaluate whether the
-unification was correct — it's done.
-
-YOUR TASK:
-
-1. Read the work file at $local_work_file for the canonical pattern and variants
-2. Read $PROJECT_ROOT/UNIFICATION_LOG.md for the latest entry about this area
-3. Read the canonical implementation files to understand what to enforce
-4. Read $DRIFT_SEMANTIC/skill/drift-guard/references/eslint-rule-patterns.md
-   for ESLint rule writing guidance
+Read $DRIFT_SEMANTIC/skill/drift-guard/references/eslint-rule-patterns.md
+for ESLint rule writing guidance.
 
 GENERATE (in this order):
 
 A. ESLint rules in $PROJECT_ROOT/eslint-rules/:
    - First line of every .js/.ts file: // drift-generated
    - At minimum one of: no-restricted-imports, no-restricted-syntax, or custom rule
-   - Ban the OLD patterns/imports that the unification removed
+   - Ban the OLD patterns/imports that you just removed during unification
    - Use 'warn' severity
    - Include helpful error messages that say what to use instead
 
@@ -632,7 +553,7 @@ C. Pattern doc in $PROJECT_ROOT/docs/patterns/:
    - First line: <!-- drift-generated -->
    - Practical usage guide showing the canonical pattern
 
-RULES:
+GUARD RULES:
 - Every generated file MUST have the drift marker on its first line
 - Every area MUST have at least one machine-enforceable ESLint rule
 - If you cannot express a constraint as a lint rule, explain specifically why
@@ -642,30 +563,41 @@ RULES:
 Environment: DRIFT_SEMANTIC=$DRIFT_HOME
 
 DELIVERABLES:
+- Modified source files (the actual refactoring)
+- Appended entry in $PROJECT_ROOT/UNIFICATION_LOG.md
 - ESLint rule file(s) in eslint-rules/
 - ADR in docs/adr/
 - Pattern doc in docs/patterns/"
 
-    # Call Claude for guard
-    _claude_call "guard: $area_id" \
+    # Single claude -p call for both unify and guard
+    _claude_call "unify+guard: $area_id" \
         "$DRIFT_HOME/skill/drift-guard/SKILL.md" \
-        "$guard_prompt" \
+        "$prompt" \
         "--session-id $(_gen_uuid)" || {
-        error "Guard failed for $area_id"
-        # Unify succeeded but guard failed — set phase to guard for retry
-        _set_phase_guard "$area_id" 2>&1 | _log
-        warn "$area_id: unify done, guard failed. Phase set to 'guard' for retry."
+        error "Unify+guard failed for $area_id"
         FAILED=$((FAILED + 1))
         rm -f "$guard_before_file"
         continue
     }
 
-    # Dry-run: skip finalize
+    # Dry-run: skip gates and updates
     if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
         rm -f "$guard_before_file"
         COMPLETED=$((COMPLETED + 1))
         continue
     fi
+
+    # Gate: check if source files were actually modified
+    changed_count="$(cd "$PROJECT_ROOT" && git diff --name-only 2>/dev/null | wc -l || echo "0")"
+
+    if [[ "$changed_count" -eq 0 ]]; then
+        warn "$area_id: Claude completed but changed zero files. Keeping as planned."
+        rm -f "$guard_before_file"
+        FAILED=$((FAILED + 1))
+        continue
+    fi
+
+    info "$area_id: $changed_count file(s) modified."
 
     # Detect new guard artifacts
     new_artifacts="$(_detect_new_guard_artifacts "$guard_before_file")"
@@ -673,9 +605,9 @@ DELIVERABLES:
     artifact_count="$(echo "$new_artifacts" | grep -c . || echo "0")"
 
     if [[ "$artifact_count" -eq 0 ]]; then
-        warn "$area_id: Guard completed but created zero artifact files."
-        warn "Setting phase to guard for retry."
+        warn "$area_id: Unification done but no guard artifacts created."
         _set_phase_guard "$area_id" 2>&1 | _log
+        warn "Phase set to 'guard' — retry with: drift unify . --area $area_id"
         FAILED=$((FAILED + 1))
         continue
     fi
@@ -692,7 +624,7 @@ DELIVERABLES:
         --finalize "$area_id" --guard-artifacts "${artifact_args[@]}" 2>&1 | _log
 
     COMPLETED=$((COMPLETED + 1))
-    success "$area_id: unify + guard complete. Phase set to completed."
+    success "$area_id complete (unify + guard). Phase → completed."
 
     # Clean up work file
     rm -f "$local_work_file"
