@@ -374,12 +374,23 @@ def compute_scores(output_dir: Path, threshold: float = 0.35) -> None:
     total_pairs = 0
     scored_pairs: list[dict] = []
     n = len(candidate_ids)
-    print(f"  Scoring {n} units ({n * (n - 1) // 2} potential pairs)...", file=sys.stderr)
+    max_pairs = n * (n - 1) // 2
+    print(f"  Scoring {n} units ({max_pairs} potential pairs)...", file=sys.stderr)
 
+    _last_pct = -1
     for i in range(n):
         uid_a = candidate_ids[i]
         kind_a = units_by_id[uid_a].get("kind", "")
         file_a = file_of[uid_a]
+
+        # Progress: report every 10%
+        pct = (i * 100) // n if n else 100
+        if pct // 10 > _last_pct // 10:
+            _last_pct = pct
+            print(
+                f"  ... {pct}% ({total_pairs} pairs scored, {len(scored_pairs)} above threshold)",
+                file=sys.stderr,
+            )
 
         for j in range(i + 1, n):
             uid_b = candidate_ids[j]
