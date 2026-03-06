@@ -1,6 +1,6 @@
 import { SourceFile, Node, SyntaxKind } from "ts-morph";
 import * as path from "node:path";
-import type { CodeUnit, ParameterInfo } from "./types.js";
+import type { CodeUnit, ParameterInfo, TypeMemberInfo } from "./types.js";
 import { analyzeJsx } from "./jsxAnalyzer.js";
 import { analyzeHooks } from "./hookAnalyzer.js";
 import { analyzeImports } from "./importAnalyzer.js";
@@ -52,6 +52,85 @@ export function extractUnits(sourceFile: SourceFile, projectRoot: string): CodeU
     }
   }
 
+  const exportedNames = new Set(exportedDeclarations.keys());
+  const nonExported = extractNonExportedUnits(
+    sourceFile,
+    projectRoot,
+    exportedNames,
+    importInfo
+  );
+  units.push(...nonExported);
+
+  return units;
+}
+
+const MIN_NON_EXPORTED_LINES = 5;
+
+/**
+ * Collect non-exported function and variable declarations that have function
+ * initializers. Returns raw candidates — caller applies naming/size filters.
+ */
+function collectNonExportedCandidates(sourceFile: SourceFile): { name: string; decl: Node }[] {
+  const candidates: { name: string; decl: Node }[] = [];
+
+  for (const fn of sourceFile.getDescendantsOfKind(SyntaxKind.FunctionDeclaration)) {
+    const name = fn.getName();
+    if (name && !fn.isExported()) {
+      candidates.push({ name, decl: fn });
+    }
+  }
+
+  for (const vd of sourceFile.getDescendantsOfKind(SyntaxKind.VariableDeclaration)) {
+    const name = vd.getName();
+    const init = vd.getInitializer();
+    if (!name || !init) continue;
+    if (!Node.isArrowFunction(init) && !Node.isFunctionExpression(init)) continue;
+    const varStmt = vd.getFirstAncestorByKind(SyntaxKind.VariableStatement);
+    if (varStmt && varStmt.isExported()) continue;
+    candidates.push({ name, decl: vd });
+  }
+
+  return candidates;
+}
+
+/**
+ * Extract non-exported hooks and components from a source file.
+ *
+ * Uses naming conventions (use[A-Z] for hooks, PascalCase+JSX for components)
+ * and a minimum size filter. Skips names already in the exported set.
+ */
+function extractNonExportedUnits(
+  sourceFile: SourceFile,
+  projectRoot: string,
+  exportedNames: Set<string>,
+  importInfo: ReturnType<typeof analyzeImports>
+): CodeUnit[] {
+  const units: CodeUnit[] = [];
+  const relativePath = path.relative(projectRoot, sourceFile.getFilePath());
+  const seenNames = new Set<string>();
+  const candidates = collectNonExportedCandidates(sourceFile);
+
+  for (const { name, decl } of candidates) {
+    if (exportedNames.has(name) || seenNames.has(name)) continue;
+
+    const lines = decl.getEndLineNumber() - decl.getStartLineNumber() + 1;
+    if (lines < MIN_NON_EXPORTED_LINES) continue;
+
+    const kind = determineKind(decl, name);
+    if (kind !== "hook" && kind !== "component") continue;
+
+    seenNames.add(name);
+
+    try {
+      const unit = extractSingleUnit(decl, name, relativePath, sourceFile, projectRoot, importInfo);
+      if (unit) units.push(unit);
+    } catch (err) {
+      process.stderr.write(
+        `  WARN: failed to extract non-exported ${name} from ${relativePath}: ${err}\n`
+      );
+    }
+  }
+
   return units;
 }
 
@@ -81,6 +160,7 @@ function extractSingleUnit(
   const parameters = extractParameters(decl);
   const returnType = extractReturnType(decl);
   const generics = extractGenerics(decl);
+  const typeMembers = extractTypeMembers(decl);
 
   // Get the function-like node for body analysis (may be the decl itself or its initializer)
   const analyzableNode = getAnalyzableNode(decl);
@@ -155,6 +235,7 @@ function extractSingleUnit(
     parameters,
     returnType,
     generics,
+    typeMembers,
 
     // JSX
     jsxTree: jsxInfo?.jsxTree ?? null,
@@ -418,4 +499,46 @@ function extractGenerics(decl: Node): string[] {
   } catch {
     return [];
   }
+}
+
+/**
+ * Extract member properties from interface or type alias declarations.
+ * Only extracts top-level property signatures (not methods, index signatures, etc.).
+ */
+function extractTypeMembers(decl: Node): TypeMemberInfo[] {
+  const members: TypeMemberInfo[] = [];
+
+  let memberNodes: Node[] = [];
+
+  if (Node.isInterfaceDeclaration(decl)) {
+    memberNodes = decl.getMembers();
+  } else if (Node.isTypeAliasDeclaration(decl)) {
+    const typeNode = decl.getTypeNode();
+    if (typeNode && Node.isTypeLiteral(typeNode)) {
+      memberNodes = typeNode.getMembers();
+    }
+  }
+
+  for (const m of memberNodes) {
+    if (!Node.isPropertySignature(m)) continue;
+    const name = m.getName();
+    let type = "unknown";
+    try {
+      const typeNode = m.getTypeNode();
+      if (typeNode) {
+        type = typeNode.getText();
+      } else {
+        type = m.getType().getText(m);
+      }
+    } catch {
+      type = "unknown";
+    }
+    if (type.length > 500) {
+      type = type.slice(0, 497) + "...";
+    }
+    const optional = m.hasQuestionToken();
+    members.push({ name, type, optional });
+  }
+
+  return members;
 }

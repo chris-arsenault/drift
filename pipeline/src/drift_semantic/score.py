@@ -48,11 +48,28 @@ WEIGHTS_WITHOUT_EMBEDDINGS = {
     "neighborhood": 0.06,
 }
 
+WEIGHTS_TYPE_WITH_EMBEDDINGS = {
+    "typeMemberOverlap": 0.40,
+    "semantic": 0.10,
+    "imports": 0.10,
+    "consumerSet": 0.15,
+    "coOccurrence": 0.15,
+    "neighborhood": 0.10,
+}
+
+WEIGHTS_TYPE_WITHOUT_EMBEDDINGS = {
+    "typeMemberOverlap": 0.45,
+    "imports": 0.12,
+    "consumerSet": 0.18,
+    "coOccurrence": 0.15,
+    "neighborhood": 0.10,
+}
+
 # Component/hook only signals — dropped for non-component pairs
 _COMPONENT_ONLY_SIGNALS = {"jsxStructure", "hookProfile"}
 
 # Kinds that should be skipped entirely (structural, not behavioral)
-_SKIP_KINDS = {"type", "enum", "constant", "interface", "typeAlias"}
+_SKIP_KINDS = {"enum", "constant"}
 
 # Cross-kind pairs that are allowed
 _RELATED_KINDS = {
@@ -75,6 +92,21 @@ def _get_weights(
     kind_b: str,
 ) -> dict[str, float]:
     """Build the weight dict adapted to available signals and unit kinds."""
+    # Type pairs: dedicated weight matrix (types have no behavioral signals)
+    if kind_a == "type" and kind_b == "type":
+        base = dict(WEIGHTS_TYPE_WITH_EMBEDDINGS if has_embeddings else WEIGHTS_TYPE_WITHOUT_EMBEDDINGS)
+        if has_structural_patterns:
+            total = sum(base.values())
+            reduction = 0.05
+            for k in base:
+                base[k] *= (total - reduction) / total
+            base["structuralPattern"] = 0.05
+        total = sum(base.values())
+        if total > 0:
+            for k in base:
+                base[k] /= total
+        return base
+
     base = dict(WEIGHTS_WITH_EMBEDDINGS if has_embeddings else WEIGHTS_WITHOUT_EMBEDDINGS)
 
     # If structural patterns available, take 0.05 proportionally from others
@@ -301,6 +333,17 @@ def sig_structural_pattern(uid_a: str, uid_b: str, patterns: dict[str, list[str]
     return jaccard_sim(set(pa), set(pb))
 
 
+def sig_type_members(uid_a: str, uid_b: str, units_by_id: dict[str, dict]) -> float:
+    """Jaccard similarity on type member name sets."""
+    members_a = units_by_id.get(uid_a, {}).get("typeMembers", [])
+    members_b = units_by_id.get(uid_b, {}).get("typeMembers", [])
+    names_a = {m["name"] for m in members_a if isinstance(m, dict) and "name" in m}
+    names_b = {m["name"] for m in members_b if isinstance(m, dict) and "name" in m}
+    if not names_a and not names_b:
+        return 0.0
+    return jaccard_sim(names_a, names_b)
+
+
 # ---------------------------------------------------------------------------
 # Main scoring
 # ---------------------------------------------------------------------------
@@ -339,6 +382,7 @@ _SIGNAL_FUNCS = {
     "coOccurrence": lambda a, b, art: sig_cooccurrence(a, b, art["dc"]),
     "neighborhood": lambda a, b, art: sig_neighborhood(a, b, art["dc"]),
     "structuralPattern": lambda a, b, art: sig_structural_pattern(a, b, art["structural_patterns"]),
+    "typeMemberOverlap": lambda a, b, art: sig_type_members(a, b, art["units_by_id"]),
 }
 
 

@@ -85,6 +85,32 @@ $RG $EXCLUDES --glob='*.ts' --glob='*.tsx' \
   --no-filename -o "$SRC_DIR" 2>/dev/null | sort | uniq -c | sort -rn | head -80 || true
 
 echo ""
+echo "### Types/interfaces defined in multiple files"
+$RG $EXCLUDES --glob='*.ts' --glob='*.tsx' \
+  -n -e '^\s*(export )?(interface|type) [A-Z]\w+' \
+  "$SRC_DIR" 2>/dev/null | \
+  python3 -c "
+import sys, re
+from collections import defaultdict
+by_name = defaultdict(list)
+for line in sys.stdin:
+    line = line.strip()
+    if not line: continue
+    m = re.match(r'(.+?):(\d+):\s*(export\s+)?(interface|type)\s+([A-Z]\w+)', line)
+    if m:
+        by_name[m.group(5)].append(f'{m.group(1)}:{m.group(2)}')
+for name in sorted(by_name, key=lambda n: -len(by_name[n])):
+    files = by_name[name]
+    unique_files = set(f.rsplit(':',1)[0] for f in files)
+    if len(unique_files) > 1:
+        print(f'{len(unique_files)} files  {name}')
+        for f in files[:5]:
+            print(f'    {f}')
+        if len(files) > 5:
+            print(f'    ... and {len(files)-5} more')
+" || true
+
+echo ""
 echo "### Default exports"
 $RG $EXCLUDES --glob='*.ts' --glob='*.tsx' --glob='*.js' --glob='*.jsx' \
   -e '^export default' \
@@ -107,6 +133,12 @@ $RG $EXCLUDES --glob='*.tsx' --glob='*.jsx' \
   --no-filename "$SRC_DIR" 2>/dev/null | head -100 || true
 
 echo ""
+echo "### Non-exported component definitions (inline/local)"
+$RG $EXCLUDES --glob='*.tsx' --glob='*.jsx' \
+  -n -e '^\s+(const|function) [A-Z][a-zA-Z0-9]+\s*(:\s*\w+(<[^>]*>)?)?\s*=' \
+  "$SRC_DIR" 2>/dev/null | head -80 || true
+
+echo ""
 
 # ─── 4. HOOK DEFINITIONS ───────────────────────────────────────
 echo "=== SECTION: CUSTOM_HOOKS ==="
@@ -114,6 +146,12 @@ echo "## All custom hook definitions"
 $RG $EXCLUDES --glob='*.ts' --glob='*.tsx' \
   -e '^export (const|function|default function) use[A-Z]\w+' \
   "$SRC_DIR" 2>/dev/null | sort || true
+
+echo ""
+echo "## Non-exported hook definitions (inline/local)"
+$RG $EXCLUDES --glob='*.ts' --glob='*.tsx' \
+  -n -e '^\s+(const|function|let) use[A-Z]\w+' \
+  "$SRC_DIR" 2>/dev/null | head -80 || true
 
 echo ""
 

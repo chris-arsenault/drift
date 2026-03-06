@@ -80,6 +80,9 @@ graph TD
 ### Stage 1: EXTRACT (tool)
 
 ts-morph parses the full codebase and extracts all exported code units.
+Non-exported hooks and components are also extracted if they match naming
+conventions (`use[A-Z]` for hooks, PascalCase+JSX for components) and are
+>= 5 lines.
 
 **Extracts per unit:**
 
@@ -91,6 +94,7 @@ Type Information:
   - parameters/props (name, resolved type, optionality)
   - returnType (resolved)
   - generics, type alias chain
+  - typeMembers: property name, type, optionality (interfaces/type aliases)
 
 Structure (components):
   - jsxTree: tag nesting with map/conditional markers, attributes stripped

@@ -6,10 +6,11 @@ drift is a multi-stage pipeline that detects semantic duplication in TypeScript/
 
 ### extractor/ — TypeScript (ts-morph)
 
-Parses the full codebase AST and extracts all exported code units. Each unit captures:
+Parses the full codebase AST and extracts all exported code units. Non-exported hooks and components are also extracted if they match naming conventions (`use[A-Z]` for hooks, PascalCase+JSX for components) and are >= 5 lines. Each unit captures:
 
 - **Identity** — name, kind (component/hook/function/class/type/constant/enum), file path, line range
 - **Types** — parameter types, return type, generics
+- **Type members** — property names, types, and optionality for interfaces and type aliases
 - **JSX** — tree structure with map/conditional markers, leaf elements, depth
 - **Hooks** — React built-in and custom hook calls with counts
 - **Imports** — categorized as framework, external (npm), or internal
@@ -161,6 +162,7 @@ Generates final output from all artifacts (including `css-clusters.json` and `fi
 | neighborhood | Hash match at radius 1 (1.0) or radius 2 (0.6) | All |
 | structuralPattern | Jaccard on ast-grep pattern tags | If ast-grep available |
 | semantic | Cosine similarity on purpose statement embeddings | If embeddings available |
+| typeMemberOverlap | Jaccard on type member name sets | Type pairs only |
 
 ### Weight Adaptation
 
@@ -169,6 +171,7 @@ Weights adapt automatically based on context:
 - **Embeddings present**: semantic signal gets 0.20, other weights scale down
 - **Component pairs**: jsxStructure and hookProfile included
 - **Non-component pairs**: component-only signals dropped, remaining weights renormalize to 1.0
+- **Type pairs**: dedicated weight matrix — typeMemberOverlap (0.40–0.45), imports, consumer, co-occurrence, neighborhood. All behavioral signals dropped.
 - **ast-grep available**: structuralPattern signal added
 - **Cross-kind pairs**: only comparable kinds scored (component-hook, hook-function, same-kind)
 

@@ -1,6 +1,7 @@
 """Tests for scoring logic — weight adaptation and signal functions."""
 
 from drift_semantic.score import (
+    _SKIP_KINDS,
     _get_weights,
     _is_comparable,
     sig_behavior,
@@ -10,6 +11,7 @@ from drift_semantic.score import (
     sig_imports,
     sig_jsx_structure,
     sig_neighborhood,
+    sig_type_members,
     sig_type_signature,
 )
 
@@ -186,3 +188,73 @@ class TestSigBehavior:
     def test_both_empty(self):
         fps = {"a": {}, "b": {}}
         assert sig_behavior("a", "b", fps) == 1.0
+
+
+class TestSigTypeMembers:
+    def test_identical_fields(self):
+        units = {
+            "a": {"typeMembers": [
+                {"name": "id", "type": "string", "optional": False},
+                {"name": "name", "type": "string", "optional": False},
+            ]},
+            "b": {"typeMembers": [
+                {"name": "id", "type": "string", "optional": False},
+                {"name": "name", "type": "string", "optional": False},
+            ]},
+        }
+        assert sig_type_members("a", "b", units) == 1.0
+
+    def test_partial_overlap(self):
+        units = {
+            "a": {"typeMembers": [
+                {"name": "id", "type": "string", "optional": False},
+                {"name": "name", "type": "string", "optional": False},
+                {"name": "email", "type": "string", "optional": True},
+            ]},
+            "b": {"typeMembers": [
+                {"name": "id", "type": "string", "optional": False},
+                {"name": "name", "type": "string", "optional": False},
+                {"name": "avatar", "type": "string", "optional": True},
+            ]},
+        }
+        # Jaccard: intersection={id,name}=2, union={id,name,email,avatar}=4 -> 0.5
+        result = sig_type_members("a", "b", units)
+        assert abs(result - 0.5) < 1e-6
+
+    def test_disjoint_fields(self):
+        units = {
+            "a": {"typeMembers": [{"name": "foo", "type": "string", "optional": False}]},
+            "b": {"typeMembers": [{"name": "bar", "type": "number", "optional": False}]},
+        }
+        assert sig_type_members("a", "b", units) == 0.0
+
+    def test_both_empty(self):
+        units = {"a": {"typeMembers": []}, "b": {"typeMembers": []}}
+        assert sig_type_members("a", "b", units) == 0.0
+
+    def test_missing_unit(self):
+        assert sig_type_members("a", "b", {}) == 0.0
+
+
+class TestTypeWeights:
+    def test_type_pair_sums_to_1(self):
+        w = _get_weights(False, False, "type", "type")
+        assert abs(sum(w.values()) - 1.0) < 1e-6
+
+    def test_type_pair_has_member_signal(self):
+        w = _get_weights(False, False, "type", "type")
+        assert "typeMemberOverlap" in w
+
+    def test_type_pair_no_behavioral_signals(self):
+        w = _get_weights(False, False, "type", "type")
+        for sig in ("jsxStructure", "hookProfile", "calleeSet", "callSequence", "dataAccess", "behavior"):
+            assert sig not in w
+
+    def test_type_pair_with_embeddings(self):
+        w = _get_weights(True, False, "type", "type")
+        assert abs(sum(w.values()) - 1.0) < 1e-6
+        assert "semantic" in w
+        assert "typeMemberOverlap" in w
+
+    def test_type_not_skipped(self):
+        assert "type" not in _SKIP_KINDS

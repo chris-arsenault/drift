@@ -15,6 +15,13 @@ export interface ParameterInfo {
   optional: boolean;
 }
 
+/** A member (property) of an interface or type literal */
+export interface TypeMemberInfo {
+  name: string;
+  type: string;
+  optional: boolean;
+}
+
 /** An import declaration with categorization */
 export interface ImportEntry {
   source: string;
@@ -101,6 +108,7 @@ export interface CodeUnit {
   parameters: ParameterInfo[];
   returnType: string;
   generics: string[];
+  typeMembers: TypeMemberInfo[];
 
   // ── JSX structure (components only, null for others) ────────────────────
   jsxTree: JsxTreeNode | null;
